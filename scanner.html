@@ -11,6 +11,7 @@
 
 <!-- ZXing pour le scan -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 
 <style>
   :root {
@@ -322,6 +323,109 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ─── ÉTIQUETTES ─── */
+  .label-create-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .label-create-box h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .input-row input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row input::placeholder { color: var(--text-dim); }
+  .btn-create {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 16px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .barcode-preview {
+    background: white;
+    border-radius: var(--radius);
+    padding: 16px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .barcode-preview.visible { display: flex; }
+  .barcode-preview svg { max-width: 100%; }
+  .barcode-nom {
+    font-size: 16px;
+    font-weight: 700;
+    color: #111;
+    text-align: center;
+  }
+  .btn-print {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+  }
+
+  .labels-list { display: flex; flex-direction: column; gap: 8px; }
+  .label-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .label-card-name { font-weight: 600; font-size: 15px; }
+  .label-card-code { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .label-card-last { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  .btn-show-barcode {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-show-barcode:hover { border-color: var(--accent); color: var(--accent); }
+
+  @media print {
+    body > *:not(#print-area) { display: none !important; }
+    #print-area { display: block !important; padding: 20px; }
+  }
+  #print-area { display: none; }
+
   /* ─── EDIT NOM ─── */
   .btn-edit {
     background: none;
@@ -373,6 +477,7 @@
 <div class="tabs">
   <div class="tab active" onclick="switchTab('scan')">📷 Scanner</div>
   <div class="tab" onclick="switchTab('history')">📅 Historique</div>
+  <div class="tab" onclick="switchTab('labels')">🏷️ Étiquettes</div>
 </div>
 
 <!-- ═══ PAGE SCAN ═══ -->
@@ -390,6 +495,26 @@
   </div>
 </div>
 
+<!-- ═══ PAGE ÉTIQUETTES ═══ -->
+<div class="page" id="page-labels">
+  <div class="label-create-box">
+    <h3>Créer une étiquette</h3>
+    <div class="input-row">
+      <input type="text" id="label-name-input" placeholder="Ex : Filet de poulet" onkeydown="if(event.key==='Enter') createLabel()">
+      <button class="btn-create" onclick="createLabel()">Créer</button>
+    </div>
+  </div>
+
+  <div class="barcode-preview" id="barcode-preview">
+    <div class="barcode-nom" id="barcode-nom"></div>
+    <svg id="barcode-svg"></svg>
+    <div style="font-family:monospace;font-size:12px;color:#666;" id="barcode-code-display"></div>
+    <button class="btn-print" onclick="printBarcode()">🖨️ Imprimer l'étiquette</button>
+  </div>
+
+  <div id="labels-list-content"></div>
+</div>
+
 <!-- ═══ PAGE HISTORIQUE ═══ -->
 <div class="page" id="page-history">
   <div class="search-bar">
@@ -400,12 +525,13 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div id="print-area"></div>
 
 <script>
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -882,13 +1008,125 @@ function handleSearch() {
 }
 
 // ═══════════════════════════════════════
+// ÉTIQUETTES
+// ═══════════════════════════════════════
+function generateCode(nom) {
+  // Code unique basé sur timestamp + nom hashé
+  const ts = Date.now().toString(36).toUpperCase();
+  const hash = nom.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) & 0xFFFF, 0).toString(16).toUpperCase().padStart(4, '0');
+  return `BA${hash}${ts}`;
+}
+
+function createLabel() {
+  const input = document.getElementById('label-name-input');
+  const nom = input.value.trim();
+  if (!nom) { showToast('Entre un nom de produit', 'error'); return; }
+
+  const code = generateCode(nom);
+  showBarcode(code, nom);
+  input.value = '';
+}
+
+function showBarcode(code, nom) {
+  const preview = document.getElementById('barcode-preview');
+  document.getElementById('barcode-nom').textContent = nom;
+  document.getElementById('barcode-code-display').textContent = code;
+  preview.className = 'barcode-preview visible';
+
+  JsBarcode('#barcode-svg', code, {
+    format: 'CODE128',
+    width: 2,
+    height: 60,
+    displayValue: false,
+    margin: 8
+  });
+
+  // Sauvegarde dans produits.json si connecté
+  if (accessToken && !produitsDict[code]) {
+    produitsDict[code] = nom;
+    saveProduitsJson().then(() => showToast('Étiquette sauvegardée ✓', 'success'));
+  } else if (!accessToken) {
+    showToast('Connecte-toi pour sauvegarder', 'error');
+  }
+}
+
+function printBarcode() {
+  const nom = document.getElementById('barcode-nom').textContent;
+  const code = document.getElementById('barcode-code-display').textContent;
+  const svgEl = document.getElementById('barcode-svg');
+
+  // Génère un SVG frais pour l'impression
+  const printSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  printSvg.id = 'print-barcode-svg';
+  const printArea = document.getElementById('print-area');
+  printArea.innerHTML = `
+    <div style="text-align:center;font-family:sans-serif;padding:20px;">
+      <div style="font-size:20px;font-weight:700;margin-bottom:8px;">${nom}</div>
+      <svg id="print-barcode-svg"></svg>
+      <div style="font-family:monospace;font-size:12px;margin-top:6px;color:#666;">${code}</div>
+    </div>`;
+
+  JsBarcode('#print-barcode-svg', code, {
+    format: 'CODE128',
+    width: 3,
+    height: 80,
+    displayValue: false,
+    margin: 10
+  });
+
+  window.print();
+}
+
+async function loadLabels() {
+  const el = document.getElementById('labels-list-content');
+  if (!accessToken) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour voir tes étiquettes</div></div>';
+    return;
+  }
+
+  // Filtre les codes maison (préfixe BA) depuis produitsDict
+  const labels = Object.entries(produitsDict).filter(([code]) => code.startsWith('BA'));
+
+  if (labels.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🏷️</div><div class="empty-text">Aucune étiquette créée</div></div>';
+    return;
+  }
+
+  // Cherche la dernière utilisation dans le cache
+  const lastUse = {};
+  allEntries.forEach(e => {
+    if (!lastUse[e.code] || e.date > lastUse[e.code].date) lastUse[e.code] = e;
+  });
+
+  el.innerHTML = `
+    <div style="font-size:13px;color:var(--text-dim);font-weight:500;">${labels.length} étiquette${labels.length > 1 ? 's' : ''}</div>
+    <div class="labels-list">
+      ${labels.map(([code, nom]) => {
+        const last = lastUse[code];
+        return `<div class="label-card">
+          <div>
+            <div class="label-card-name">${nom}</div>
+            <div class="label-card-code">${code}</div>
+            ${last ? `<div class="label-card-last">Dernier scan : ${formatDate(last.date)} à ${last.heure}</div>` : '<div class="label-card-last" style="color:var(--accent)">Jamais scanné</div>'}
+          </div>
+          <button class="btn-show-barcode" onclick="showBarcode('${code}', '${nom.replace(/'/g,"\'")}')">📄</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// ═══════════════════════════════════════
 // UI HELPERS
 // ═══════════════════════════════════════
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0) === (tab === 'scan')));
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', (tab === 'scan' && i === 0) || (tab === 'history' && i === 1) || (tab === 'labels' && i === 2));
+  });
   document.getElementById('page-scan').classList.toggle('active', tab === 'scan');
   document.getElementById('page-history').classList.toggle('active', tab === 'history');
+  document.getElementById('page-labels').classList.toggle('active', tab === 'labels');
   if (tab === 'history') loadHistory();
+  if (tab === 'labels') loadLabels();
   if (tab === 'scan') stopScan();
 }
 
