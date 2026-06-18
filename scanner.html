@@ -10,7 +10,7 @@
 <title>Scanner Boucherie</title>
 
 <!-- ZXing pour le scan -->
-<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
 <style>
   :root {
@@ -104,49 +104,18 @@
   .page.active { display: flex; }
 
   /* ─── SCANNER ─── */
-  .scanner-box {
-    position: relative;
-    background: #000;
+  #reader {
+    width: 100%;
     border-radius: var(--radius);
     overflow: hidden;
-    aspect-ratio: 4/3;
-    width: 100%;
+    background: #000;
   }
-  #video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .scan-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-  }
-  .scan-frame {
-    width: 60%;
-    aspect-ratio: 2/1;
-    border: 2px solid var(--accent);
-    border-radius: 8px;
-    box-shadow: 0 0 0 2000px rgba(0,0,0,.45);
-    position: relative;
-  }
-  .scan-line {
-    position: absolute;
-    left: 0; right: 0;
-    height: 2px;
-    background: var(--accent);
-    animation: scanline 2s linear infinite;
-    box-shadow: 0 0 8px var(--accent);
-  }
-  @keyframes scanline {
-    0% { top: 5%; }
-    50% { top: 90%; }
-    100% { top: 5%; }
-  }
+  #reader video { width: 100% !important; border-radius: var(--radius); }
+  #reader img { display: none !important; }
+  /* Cacher les boutons par défaut de html5-qrcode */
+  #reader__dashboard { display: none !important; }
+  #reader__scan_region { border: none !important; }
+  #reader__scan_region > img { display: none !important; }
 
   #btn-scan {
     width: 100%;
@@ -368,14 +337,7 @@
 
 <!-- ═══ PAGE SCAN ═══ -->
 <div class="page active" id="page-scan">
-  <div class="scanner-box">
-    <video id="video" playsinline autoplay muted></video>
-    <div class="scan-overlay">
-      <div class="scan-frame">
-        <div class="scan-line"></div>
-      </div>
-    </div>
-  </div>
+  <div id="reader"></div>
 
   <button id="btn-scan" onclick="startScan()">📷 Démarrer le scanner</button>
 
@@ -415,7 +377,7 @@ let driveFolderId = null;
 let produitsDict = {};  // { code: nom }
 let currentScan = null; // { code, nom, date, heure }
 let tokenClient = null;
-let codeReader = null;
+let html5QrCode = null;
 let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
@@ -597,27 +559,43 @@ async function startScan() {
     scanActive = true;
     document.getElementById('btn-scan').textContent = '⏹ Arrêter';
 
-    codeReader = new ZXing.BrowserMultiFormatReader();
-    // null = caméra par défaut (arrière sur mobile)
-    const videoInputDevices = await codeReader.listVideoInputDevices();
-    const backCamera = videoInputDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear') || d.label.toLowerCase().includes('environment')) || videoInputDevices[videoInputDevices.length - 1];
-    const deviceId = backCamera ? backCamera.deviceId : undefined;
-
-    codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
-      if (result && scanActive) {
-        onCodeDetected(result.getText());
-      }
-    });
+    html5QrCode = new Html5Qrcode('reader');
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      {
+        fps: 15,
+        qrbox: { width: 280, height: 140 },
+        aspectRatio: 1.5,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.DATA_MATRIX,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+        ]
+      },
+      (decodedText) => {
+        if (scanActive) onCodeDetected(decodedText);
+      },
+      () => {} // ignore erreurs de lecture frame par frame
+    );
   } catch (e) {
+    scanActive = false;
+    document.getElementById('btn-scan').textContent = '📷 Démarrer le scanner';
     showToast('Caméra inaccessible', 'error');
+    console.error(e);
   }
 }
 
-function stopScan() {
+async function stopScan() {
   scanActive = false;
-  if (codeReader) { codeReader.reset(); codeReader = null; }
-  const video = document.getElementById('video');
-  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+  if (html5QrCode) {
+    try { await html5QrCode.stop(); } catch(e) {}
+    html5QrCode = null;
+  }
   document.getElementById('btn-scan').textContent = '📷 Démarrer le scanner';
 }
 
