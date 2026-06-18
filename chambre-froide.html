@@ -830,51 +830,53 @@ async function extractPdfText(file) {
 }
 
 function parseFournisseur(text) {
-  // Détection du fournisseur
+  if (text.includes('SALOIR') || text.includes('saloir-st-remy')) return parseSaloir(text);
   if (text.includes('SAVEURS D') || text.includes('saveursdantoine')) return parseSaveursAntoine(text);
-  if (text.includes('SALOIR') || text.includes('saloir')) return parseSaloir(text);
-  if (text.includes('CHAZAL') || text.includes('chazal')) return parseChazal(text);
-  // Tentative générique
+  if (text.includes('CHAZAL') || text.includes('maisonchazal')) return parseChazal(text);
   return parseGeneric(text);
 }
 
-function parseSaveursAntoine(text) {
-  // Format : nom + EAN13 : XXXXX + dlc DD/MM/YY
+// ── LE SALOIR ──
+// Format : code 8 chiffres, nom, puis ligne "Lot N° : XXXX - DLC : DD/MM/YY"
+// Le code article COMMENCE TOUJOURS par 000 ou 005 (ex: 00010010, 00032844)
+// On exclut les lignes d'en-tête en vérifiant que le code commence bien par 000/005
+function parseSaloir(text) {
   const items = [];
-  const lines = text.split(/\n/);
+  // Cherche le bloc après "BL " (bon de livraison) pour ignorer l'en-tête
+  const startIdx = text.search(/BL\s+\d+\s+du\s+\d/i);
+  const body = startIdx > 0 ? text.slice(startIdx) : text;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Cherche EAN13
-    const eanMatch = line.match(/EAN\s*13\s*[:\s]+(\d{8,13})/i);
-    if (!eanMatch) continue;
+  // Pattern : code 8 chiffres (commençant par 0) suivi du nom puis DLC
+  // On cherche d'abord tous les "Lot N° : XXXX - DLC : DD/MM/YY"
+  const dlcRegex = /Lot\s+N[°o]\s*:\s*(\d+)\s*-\s*DLC\s*:\s*(\d{2})\/(\d{2})\/(\d{2,4})/gi;
+  let dlcMatch;
 
-    // Nom = ligne précédente ou courante avant EAN
-    let nom = '';
-    const nomMatch = line.match(/^(.+?)EAN/i);
-    if (nomMatch) {
-      nom = nomMatch[1].replace(/\d{6}/, '').trim();
-    } else if (i > 0) {
-      nom = lines[i-1].replace(/^\d{6}/, '').trim();
-    }
+  while ((dlcMatch = dlcRegex.exec(body)) !== null) {
+    // Remonte avant ce match pour trouver le code article + nom
+    const before = body.slice(Math.max(0, dlcMatch.index - 300), dlcMatch.index);
 
-    // DLC sur la ligne suivante
-    let dlc = null;
-    for (let j = i+1; j <= i+3 && j < lines.length; j++) {
-      const dlcMatch = lines[j].match(/dlc\s+(\d{2})\/(\d{2})\/(\d{2,4})/i);
-      if (dlcMatch) {
-        dlc = parseDlcFr(dlcMatch[1], dlcMatch[2], dlcMatch[3]);
-        break;
-      }
-    }
+    // Cherche le dernier code article valide (8 chiffres commençant par 0)
+    const codeMatches = [...before.matchAll(/(0\d{7})\s+([A-Z][A-Z0-9\s\/\-\'\(\)\.\+]{3,60?})/g)];
+    if (!codeMatches.length) continue;
 
-    if (nom && eanMatch[1]) {
+    const last = codeMatches[codeMatches.length - 1];
+    const code = last[1];
+    let nom = last[2].trim();
+
+    // Nettoie le nom : retire les chiffres isolés et unités en fin
+    nom = nom.replace(/\s+(\d+\s+)?(PI|CRT|KG|BQE|BTE|PCH|TER|SEAU|BQT|PI\.?|KG\.?)\s*$/i, '').trim();
+    nom = nom.replace(/\s+\d+[,.]\d+\s*$/, '').trim();
+
+    const dlc = parseDlcFr(dlcMatch[2], dlcMatch[3], dlcMatch[4]);
+
+    // Évite les doublons (même code + même DLC)
+    if (!items.find(i => i.codeFacture === code && i.dlc === dlc)) {
       items.push({
         nom: cleanNom(nom),
-        codeFacture: eanMatch[1],
-        codePhysique: eanMatch[1], // EAN13 = même code physique
+        codeFacture: code,
+        codePhysique: null,
         dlc,
-        supplier: 'Saveurs d\'Antoine',
+        supplier: 'Le Saloir',
         qty: 1
       });
     }
@@ -882,35 +884,56 @@ function parseSaveursAntoine(text) {
   return items;
 }
 
-function parseSaloir(text) {
+// ── SAVEURS D'ANTOINE ──
+// Format : code 6 chiffres, nom, EAN13, dlc DD/MM/YY
+function parseSaveursAntoine(text) {
   const items = [];
-  // Format : CODEXXXXXX NOM ... Lot N° : XXXX - DLC : DD/MM/YY
-  const regex = /(\d{8})\s+([A-Z][^\n]+?)\n.*?Lot\s+N[°o]\s*:\s*\d+\s*-\s*DLC\s*:\s*(\d{2})\/(\d{2})\/(\d{2,4})/gis;
+  // Cherche après le premier BL
+  const startIdx = text.search(/BL\s+n[°o]\s*:\s*\d+/i);
+  const body = startIdx > 0 ? text.slice(startIdx) : text;
+
+  // Cherche les EAN13 et remonte pour trouver code + nom + dlc
+  const eanRegex = /EAN\s*13\s*[:\s]+(\d{8,13})/gi;
   let m;
-  while ((m = regex.exec(text)) !== null) {
+  while ((m = eanRegex.exec(body)) !== null) {
+    const before = body.slice(Math.max(0, m.index - 400), m.index);
+    const after = body.slice(m.index, m.index + 200);
+
+    // Code 6 chiffres + nom
+    const codeMatch = before.match(/(\d{6})\s+([A-Z][A-Z0-9\s\/\-\'\(\)\.\+\#]{3,80?})\s*$/);
+    if (!codeMatch) continue;
+
+    // DLC après l'EAN
+    const dlcMatch = after.match(/dlc\s+(\d{2})\/(\d{2})\/(\d{2,4})/i);
+    const dlc = dlcMatch ? parseDlcFr(dlcMatch[1], dlcMatch[2], dlcMatch[3]) : null;
+
     items.push({
-      nom: cleanNom(m[2]),
-      codeFacture: m[1],
-      codePhysique: null, // pas d'EAN dans la facture Saloir
-      dlc: parseDlcFr(m[3], m[4], m[5]),
-      supplier: 'Le Saloir',
+      nom: cleanNom(codeMatch[2]),
+      codeFacture: m[1], // EAN13 = code physique aussi
+      codePhysique: m[1],
+      dlc,
+      supplier: "Saveurs d\'Antoine",
       qty: 1
     });
   }
   return items;
 }
 
+// ── CHAZAL ──
+// Format : code 8 chiffres, nom, EAN13 dans la même ligne, pas de DLC
 function parseChazal(text) {
   const items = [];
-  // Format : CODEXXXXXX NOM + EAN13 XXXXXXXXX
-  const regex = /(\d{8})\s+([A-Z][^\n]+?)\s+\d+\s+(\d{13})/g;
+  const startIdx = text.search(/Bon de livraison/i);
+  const body = startIdx > 0 ? text.slice(startIdx) : text;
+
+  const regex = /(\d{8})\s+([A-Z][A-Z0-9\s\/\-\'\(\)\.]{3,60?})\s+\d+\s+(\d{13})/g;
   let m;
-  while ((m = regex.exec(text)) !== null) {
+  while ((m = regex.exec(body)) !== null) {
     items.push({
       nom: cleanNom(m[2]),
       codeFacture: m[1],
-      codePhysique: m[3], // EAN13 présent
-      dlc: null,          // pas de DLC chez Chazal
+      codePhysique: m[3],
+      dlc: null,
       supplier: 'Chazal',
       qty: 1
     });
@@ -918,9 +941,9 @@ function parseChazal(text) {
   return items;
 }
 
+// ── GÉNÉRIQUE ──
 function parseGeneric(text) {
   const items = [];
-  // Cherche tous les EAN13 + DLC proches
   const eanRegex = /EAN\s*13?\s*[:\s]+(\d{8,13})/gi;
   let m;
   while ((m = eanRegex.exec(text)) !== null) {
@@ -945,7 +968,15 @@ function parseDlcFr(d, m, y) {
 }
 
 function cleanNom(str) {
-  return str.replace(/\s+/g, ' ').replace(/^\d+\s*/, '').trim().slice(0, 60);
+  return str
+    .replace(/[\r\n]+/g, ' ')           // retours à la ligne
+    .replace(/\s+/g, ' ')               // espaces multiples
+    .replace(/^\d+\s*/, '')            // code en début
+    .replace(/\s+\d+[,.]\d+\s*(KG|PI|CRT|BQE|BTE|PCH|TER|SEAU|BQT|L|ML)?\s*$/i, '') // quantité en fin
+    .replace(/\s+(\d+\s+)?(PI|CRT|KG|BQE|BTE|PCH|TER|SEAU|BQT)\.?\s*$/i, '')         // unité en fin
+    .replace(/\s+\d+\s*$/, '')        // chiffre isolé en fin
+    .trim()
+    .slice(0, 60);
 }
 
 function renderImportPreview() {
