@@ -321,6 +321,46 @@
     margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── EDIT NOM ─── */
+  .btn-edit {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 4px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all .2s;
+    white-space: nowrap;
+  }
+  .btn-edit:hover { border-color: var(--accent); color: var(--accent); }
+
+  .edit-inline {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .edit-inline input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .btn-confirm {
+    background: var(--green);
+    color: #0f1a12;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -365,7 +405,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -615,7 +655,13 @@ function onCodeDetected(code) {
 
   if (nom) {
     card.className = 'result-card visible known';
-    area.innerHTML = `<div class="result-name">${nom}</div>`;
+    area.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="result-name" id="scan-result-name">${nom}</div>
+        <button class="btn-edit" onclick="editScanName()">✏️ Modifier</button>
+      </div>
+      <div id="scan-edit-area"></div>
+    `;
   } else {
     card.className = 'result-card visible unknown';
     area.innerHTML = `
@@ -631,6 +677,40 @@ function onCodeDetected(code) {
 
 function updateScanName(val) {
   if (currentScan) currentScan.nom = val.trim();
+}
+
+function editScanName() {
+  const area = document.getElementById('scan-edit-area');
+  const current = currentScan?.nom || '';
+  area.innerHTML = `
+    <div class="edit-inline">
+      <input type="text" id="scan-rename-input" value="${current}" placeholder="Nouveau nom…">
+      <button class="btn-confirm" onclick="confirmScanRename()">✓</button>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('scan-rename-input')?.focus(), 100);
+}
+
+async function confirmScanRename() {
+  const val = document.getElementById('scan-rename-input')?.value.trim();
+  if (!val || !currentScan) return;
+  currentScan.nom = val;
+  produitsDict[currentScan.code] = val;
+  if (accessToken) await saveProduitsJson();
+  // Rafraîchir l'affichage
+  document.getElementById('scan-result-name').textContent = val;
+  document.getElementById('scan-edit-area').innerHTML = '';
+  showToast('Nom mis à jour ✓', 'success');
+}
+
+async function renameProduct(code, currentNom) {
+  const newNom = prompt(`Renommer "${currentNom}" :`, currentNom);
+  if (!newNom || newNom.trim() === currentNom) return;
+  produitsDict[code] = newNom.trim();
+  await saveProduitsJson();
+  showToast(`Renommé en "${newNom.trim()}" ✓`, 'success');
+  // Recharger la vue courante
+  loadHistory();
 }
 
 async function uploadEntry() {
@@ -731,7 +811,10 @@ function renderEntry(e) {
   return `<div class="entry-card">
     <div class="entry-top">
       <div class="entry-name">${e.nom}</div>
-      <div class="entry-time">${e.heure}</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="entry-time">${e.heure}</div>
+        <button class="btn-edit" onclick="renameProduct('${e.code}', '${(e.nom||'').replace(/'/g,"\'")}')">✏️</button>
+      </div>
     </div>
     <div class="entry-code">${e.code}</div>
   </div>`;
