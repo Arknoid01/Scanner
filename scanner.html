@@ -647,7 +647,7 @@ function initGoogleAuth() {
     return;
   }
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: 186778124358-nt20evqish3otlh4d52h3gcosbog10mt.apps.googleusercontent.com,
+    client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (response) => {
       if (response.error) { showToast('Erreur auth', 'error'); return; }
@@ -1280,13 +1280,13 @@ function renderFreezer() {
 
 function daysAgo(dateStr) {
   const diff = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00')) / 86400000);
-  if (diff === 0) return 'Entré aujourd'hui';
+  if (diff === 0) return "Entré aujourd'hui";
   if (diff === 1) return 'Il y a 1 jour';
   return `Il y a ${diff} jours`;
 }
 
 async function addFreezerItem(nom, code) {
-  if (!accessToken) { showToast('Connecte-toi d'abord', 'error'); return; }
+  if (!accessToken) { showToast("Connecte-toi d'abord", 'error'); return; }
   if (!nom) { showToast('Nom manquant', 'error'); return; }
   const date = new Date().toISOString().slice(0, 10);
   freezerItems.unshift({ nom, code: code || '', date });
