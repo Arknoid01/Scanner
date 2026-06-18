@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0d0d0d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Boucherie Amiot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0d0d0d;
+    --surface:  #161616;
+    --border:   #2a2a2a;
+    --red:      #c0392b;
+    --red-dim:  #7a1a12;
+    --bone:     #e8ddd0;
+    --bone-dim: #9a8f83;
+    --white:    #f5f0ea;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: 'Inter', sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px 36px;
+    overflow-x: hidden;
+  }
+
+  /* ─── GRAIN texture ─── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    text-align: center;
+    margin-bottom: 48px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(36px, 8vw, 56px);
+    font-weight: 900;
+    line-height: 1;
+    color: var(--bone);
+    letter-spacing: -1px;
+  }
+
+  h1 em {
+    font-style: normal;
+    color: var(--white);
+  }
+
+  .divider {
+    width: 40px;
+    height: 2px;
+    background: var(--red);
+    margin: 16px auto 0;
+  }
+
+  /* ─── GRILLE ─── */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    width: 100%;
+    max-width: 480px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ─── TUILE ─── */
+  .tile {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 20px 20px;
+    text-decoration: none;
+    color: inherit;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: border-color .25s, transform .2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .tile:active { transform: scale(0.97); }
+
+  .tile::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    opacity: 0;
+    transition: opacity .25s;
+  }
+
+  /* Accent couleur par tuile */
+  .tile-compta  { --c: #3b82f6; }
+  .tile-commande { --c: #10b981; }
+  .tile-tracabilite { --c: #f59e0b; }
+  .tile-market  { --c: var(--red); }
+
+  .tile::after { background: radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--c) 12%, transparent), transparent 70%); }
+  .tile:hover { border-color: var(--c); }
+  .tile:hover::after { opacity: 1; }
+
+  /* Icône */
+  .tile-icon {
+    font-size: 28px;
+    line-height: 1;
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--c) 60%, transparent));
+  }
+
+  /* Nom */
+  .tile-name {
+    font-family: 'Playfair Display', serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--bone);
+    line-height: 1.2;
+  }
+
+  /* Description */
+  .tile-desc {
+    font-size: 12px;
+    color: var(--bone-dim);
+    line-height: 1.4;
+    flex: 1;
+  }
+
+  /* Flèche */
+  .tile-arrow {
+    font-size: 13px;
+    color: var(--c);
+    font-weight: 600;
+    margin-top: 4px;
+    transition: transform .2s;
+  }
+  .tile:hover .tile-arrow { transform: translateX(4px); }
+
+  /* Trait de couleur en haut */
+  .tile-bar {
+    position: absolute;
+    top: 0; left: 20px; right: 20px;
+    height: 2px;
+    background: var(--c);
+    border-radius: 0 0 2px 2px;
+    opacity: .6;
+  }
+
+  /* ─── FOOTER ─── */
+  footer {
+    margin-top: 40px;
+    font-size: 11px;
+    color: var(--border);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">Valserhône</p>
+  <h1>Boucherie<br><em>Amiot</em></h1>
+  <div class="divider"></div>
+</header>
+
+<div class="grid">
+
+  <a class="tile tile-compta" href="https://ghostwhite-koala-286250.hostingersite.com/index.php" target="_blank">
+    <div class="tile-bar"></div>
+    <div class="tile-icon">📊</div>
+    <div class="tile-name">Comptabilité</div>
+    <div class="tile-desc">Factures, virements & exports</div>
+    <div class="tile-arrow">Ouvrir →</div>
+  </a>
+
+  <a class="tile tile-commande" href="https://boucherieamiot.fr/index.php" target="_blank">
+    <div class="tile-bar"></div>
+    <div class="tile-icon">📋</div>
+    <div class="tile-name">Commandes</div>
+    <div class="tile-desc">Calendrier & gestion des stocks</div>
+    <div class="tile-arrow">Ouvrir →</div>
+  </a>
+
+  <a class="tile tile-tracabilite" href="https://arknoid01.github.io/Scanner/scanner.html" target="_blank">
+    <div class="tile-bar"></div>
+    <div class="tile-icon">📷</div>
+    <div class="tile-name">Traçabilité</div>
+    <div class="tile-desc">Scanner & suivi des produits</div>
+    <div class="tile-arrow">Ouvrir →</div>
+  </a>
+
+  <a class="tile tile-market" href="https://boucherieamiot.fr/market/dashboard.php" target="_blank">
+    <div class="tile-bar"></div>
+    <div class="tile-icon">🛒</div>
+    <div class="tile-name">Market</div>
+    <div class="tile-desc">Boutique en ligne & commandes</div>
+    <div class="tile-arrow">Ouvrir →</div>
+  </a>
+
+</div>
+
+<footer>© Boucherie Amiot</footer>
+
+</body>
+</html>
