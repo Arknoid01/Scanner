@@ -797,11 +797,7 @@ async function handlePdfFile(file) {
   showToast('Lecture du PDF…', '');
   try {
     const text = await extractPdfText(file);
-    console.log('=== TEXTE BRUT PDF ===');
-    console.log(text.slice(0, 3000));
-    console.log('=== FIN TEXTE ===');
     const items = parseFournisseur(text);
-    console.log('Items trouvés:', items.length, items);
     if (!items.length) {
       showToast('Aucun produit détecté', 'error');
       return;
@@ -841,40 +837,42 @@ function parseFournisseur(text) {
 }
 
 // ── LE SALOIR ──
-// Format : code 8 chiffres, nom, puis ligne "Lot N° : XXXX - DLC : DD/MM/YY"
-// Le code article COMMENCE TOUJOURS par 000 ou 005 (ex: 00010010, 00032844)
-// On exclut les lignes d'en-tête en vérifiant que le code commence bien par 000/005
+// Le texte PDF est sur une seule ligne avec espaces multiples
+// Pattern : (code 8 chiffres) (NOM) ... Lot N° : XXXX - DLC : DD/MM/YY
 function parseSaloir(text) {
   const items = [];
-  // Cherche le bloc après "BL " (bon de livraison) pour ignorer l'en-tête
-  const startIdx = text.search(/BL\s+\d+\s+du\s+\d/i);
+
+  // On coupe le texte au début du premier BL pour ignorer l'en-tête
+  const startIdx = text.search(/BL\s+\d{5,}/i);
   const body = startIdx > 0 ? text.slice(startIdx) : text;
 
-  // Pattern : code 8 chiffres (commençant par 0) suivi du nom puis DLC
-  // On cherche d'abord tous les "Lot N° : XXXX - DLC : DD/MM/YY"
-  const dlcRegex = /Lot\s+N[°o]\s*:\s*(\d+)\s*-\s*DLC\s*:\s*(\d{2})\/(\d{2})\/(\d{2,4})/gi;
+  // Stratégie : on cherche tous les patterns "Lot N° : XX - DLC : DD/MM/YY"
+  // puis on remonte dans le texte avant pour trouver le dernier code article
+  const dlcRegex = /Lot\s+N[°o°]\s*:\s*\d+\s*-\s*DLC\s*:\s*(\d{2})\/(\d{2})\/(\d{2,4})/gi;
   let dlcMatch;
 
   while ((dlcMatch = dlcRegex.exec(body)) !== null) {
-    // Remonte avant ce match pour trouver le code article + nom
-    const before = body.slice(Math.max(0, dlcMatch.index - 300), dlcMatch.index);
+    const before = body.slice(Math.max(0, dlcMatch.index - 400), dlcMatch.index);
 
-    // Cherche le dernier code article valide (8 chiffres commençant par 0)
-    const codeMatches = [...before.matchAll(/(0\d{7})\s+([A-Z][A-Z0-9\s\/\-\'\(\)\.\+]{3,60?})/g)];
-    if (!codeMatches.length) continue;
+    // Cherche tous les codes article valides (8 chiffres commençant par 0)
+    // suivi d'espaces et d'un nom en majuscules
+    const codeRegex = /(0\d{7})\s{2,}([A-Z][A-Z0-9\s\/\-\.'"\(\)\+\#]{2,50}?)\s{2,}/g;
+    const matches = [...before.matchAll(codeRegex)];
+    if (!matches.length) continue;
 
-    const last = codeMatches[codeMatches.length - 1];
+    // Prend le dernier (le plus proche du Lot N°)
+    const last = matches[matches.length - 1];
     const code = last[1];
     let nom = last[2].trim();
 
-    // Nettoie le nom : retire les chiffres isolés et unités en fin
-    nom = nom.replace(/\s+(\d+\s+)?(PI|CRT|KG|BQE|BTE|PCH|TER|SEAU|BQT|PI\.?|KG\.?)\s*$/i, '').trim();
-    nom = nom.replace(/\s+\d+[,.]\d+\s*$/, '').trim();
+    // Nettoie les résidus de colonnes (quantités, unités)
+    nom = nom.replace(/\s+(\d+\s+)?(PI|CRT|KG|BQE|BTE|PCH|TER|SEAU|BQT|VER|MB|S\/V|S\/OS|S\/AT)\s*$/i, '').trim();
+    nom = nom.replace(/\s+\d+[,\.]\d+\s*$/, '').trim();
+    nom = nom.replace(/\s+\d+\s*$/, '').trim();
 
-    const dlc = parseDlcFr(dlcMatch[2], dlcMatch[3], dlcMatch[4]);
+    const dlc = parseDlcFr(dlcMatch[1], dlcMatch[2], dlcMatch[3]);
 
-    // Évite les doublons (même code + même DLC)
-    if (!items.find(i => i.codeFacture === code && i.dlc === dlc)) {
+    if (nom.length > 2 && !items.find(i => i.codeFacture === code && i.dlc === dlc)) {
       items.push({
         nom: cleanNom(nom),
         codeFacture: code,
