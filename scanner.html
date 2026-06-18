@@ -478,6 +478,53 @@
   }
   .btn-show-barcode:hover { border-color: var(--accent); color: var(--accent); }
 
+  /* Checkboxes étiquettes */
+  .label-select-bar {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .label-select-bar.visible { display: flex; }
+  .btn-print-selected {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-cancel-select {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+  .label-card {
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .label-card.selected { border-color: var(--accent) !important; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .label-checkbox {
+    width: 20px; height: 20px;
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: all .15s;
+  }
+  .label-card.selected .label-checkbox { background: var(--accent); border-color: var(--accent); }
+
   @media print {
     body > *:not(#print-area) { display: none !important; }
     #print-area { display: block !important; padding: 20px; }
@@ -610,7 +657,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -627,6 +674,7 @@ let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
 let freezerItems = []; // état actuel du congélateur
+let selectedLabels = new Set(); // codes sélectionnés pour impression
 let freezerScanActive = false;
 let freezerCodeReader = null;
 
@@ -949,10 +997,24 @@ async function confirmScanRename() {
 async function renameProduct(code, currentNom) {
   const newNom = prompt(`Renommer "${currentNom}" :`, currentNom);
   if (!newNom || newNom.trim() === currentNom) return;
-  produitsDict[code] = newNom.trim();
+  const trimmed = newNom.trim();
+  produitsDict[code] = trimmed;
+
+  // Met à jour le nom dans tous les JSON du jour en cache
+  for (const dateStr of Object.keys(cache.dayEntries)) {
+    let changed = false;
+    cache.dayEntries[dateStr] = cache.dayEntries[dateStr].map(e => {
+      if (e.code === code) { changed = true; return { ...e, nom: trimmed }; }
+      return e;
+    });
+    if (changed) await uploadDayJson(dateStr, cache.dayEntries[dateStr]);
+  }
+
+  // Met à jour allEntries pour la recherche
+  allEntries = allEntries.map(e => e.code === code ? { ...e, nom: trimmed } : e);
+
   await saveProduitsJson();
-  showToast(`Renommé en "${newNom.trim()}" ✓`, 'success');
-  // Recharger la vue courante
+  showToast(`Renommé en "${trimmed}" ✓`, 'success');
   loadHistory();
 }
 
@@ -1168,13 +1230,14 @@ function printBarcode() {
 }
 
 async function loadLabels() {
+  selectedLabels.clear();
+  updateSelectBar();
   const el = document.getElementById('labels-list-content');
   if (!accessToken) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour voir tes étiquettes</div></div>';
     return;
   }
 
-  // Filtre les codes maison (préfixe BA) depuis produitsDict
   const labels = Object.entries(produitsDict).filter(([code]) => code.startsWith('BA'));
 
   if (labels.length === 0) {
@@ -1182,27 +1245,96 @@ async function loadLabels() {
     return;
   }
 
-  // Cherche la dernière utilisation dans le cache
   const lastUse = {};
   allEntries.forEach(e => {
     if (!lastUse[e.code] || e.date > lastUse[e.code].date) lastUse[e.code] = e;
   });
 
   el.innerHTML = `
-    <div style="font-size:13px;color:var(--text-dim);font-weight:500;">${labels.length} étiquette${labels.length > 1 ? 's' : ''}</div>
+    <div class="label-select-bar" id="label-select-bar">
+      <span id="select-count">0 sélectionné</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-cancel-select" onclick="clearLabelSelection()">Annuler</button>
+        <button class="btn-print-selected" onclick="printSelected()">🖨️ Imprimer</button>
+      </div>
+    </div>
+    <div style="font-size:13px;color:var(--text-dim);font-weight:500;">${labels.length} étiquette${labels.length > 1 ? 's' : ''} — <span style="color:var(--accent)">appuie pour sélectionner</span></div>
     <div class="labels-list">
       ${labels.map(([code, nom]) => {
         const last = lastUse[code];
-        return `<div class="label-card">
-          <div>
+        const safenom = nom.replace(/'/g,"\'");
+        return `<div class="label-card" id="lcard-${code}" onclick="toggleLabelSelect('${code}', '${safenom}')">
+          <div class="label-checkbox" id="lchk-${code}"></div>
+          <div style="flex:1;">
             <div class="label-card-name">${nom}</div>
             <div class="label-card-code">${code}</div>
             ${last ? `<div class="label-card-last">Dernier scan : ${formatDate(last.date)} à ${last.heure}</div>` : '<div class="label-card-last" style="color:var(--accent)">Jamais scanné</div>'}
           </div>
-          <button class="btn-show-barcode" onclick="showBarcode('${code}', '${nom.replace(/'/g,"\'")}')">📄</button>
+          <button class="btn-show-barcode" onclick="event.stopPropagation();showBarcode('${code}', '${safenom}')">📄</button>
         </div>`;
       }).join('')}
     </div>`;
+}
+
+function toggleLabelSelect(code, nom) {
+  if (selectedLabels.has(code)) {
+    selectedLabels.delete(code);
+    document.getElementById('lcard-' + code)?.classList.remove('selected');
+    document.getElementById('lchk-' + code).textContent = '';
+  } else {
+    selectedLabels.add(code);
+    document.getElementById('lcard-' + code)?.classList.add('selected');
+    document.getElementById('lchk-' + code).textContent = '✓';
+  }
+  updateSelectBar();
+}
+
+function updateSelectBar() {
+  const bar = document.getElementById('label-select-bar');
+  if (!bar) return;
+  if (selectedLabels.size > 0) {
+    bar.classList.add('visible');
+    document.getElementById('select-count').textContent = `${selectedLabels.size} sélectionné${selectedLabels.size > 1 ? 's' : ''}`;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function clearLabelSelection() {
+  selectedLabels.forEach(code => {
+    document.getElementById('lcard-' + code)?.classList.remove('selected');
+    document.getElementById('lchk-' + code).textContent = '';
+  });
+  selectedLabels.clear();
+  updateSelectBar();
+}
+
+function printSelected() {
+  if (selectedLabels.size === 0) return;
+  const printArea = document.getElementById('print-area');
+
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:16px;padding:20px;">';
+  selectedLabels.forEach(code => {
+    const nom = produitsDict[code] || code;
+    const svgId = 'psvg-' + code;
+    html += `
+      <div style="text-align:center;border:1px solid #ccc;border-radius:8px;padding:12px;min-width:160px;">
+        <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${nom}</div>
+        <svg id="${svgId}"></svg>
+        <div style="font-family:monospace;font-size:10px;color:#666;margin-top:4px;">${code}</div>
+      </div>`;
+  });
+  html += '</div>';
+  printArea.innerHTML = html;
+
+  // Génère les SVG après insertion dans le DOM
+  selectedLabels.forEach(code => {
+    JsBarcode('#psvg-' + code, code, {
+      format: 'CODE128', width: 2, height: 50, displayValue: false, margin: 6
+    });
+  });
+
+  window.print();
 }
 
 // ═══════════════════════════════════════
