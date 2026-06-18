@@ -405,7 +405,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -421,6 +421,14 @@ let html5QrCode = null;
 let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
+
+// ── Cache pour accélérer les uploads ──
+const cache = {
+  dayFolderIds: {},   // { dateStr: folderId }
+  dayFileIds: {},     // { dateStr: fileId }
+  dayEntries: {},     // { dateStr: [...entries] }
+  produitsDirty: false // produits.json a besoin d'être sauvé
+};
 
 // ═══════════════════════════════════════
 // AUTH GOOGLE
@@ -520,49 +528,68 @@ async function saveProduitsJson() {
 }
 
 async function getDayFolderId(dateStr) {
-  return await getOrCreateFolder(dateStr, driveFolderId);
+  if (cache.dayFolderIds[dateStr]) return cache.dayFolderIds[dateStr];
+  const id = await getOrCreateFolder(dateStr, driveFolderId);
+  cache.dayFolderIds[dateStr] = id;
+  return id;
 }
 
 async function uploadDayJson(dateStr, entries) {
   const folderId = await getDayFolderId(dateStr);
   const filename = `${dateStr}.json`;
+  const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
 
-  const existing = await driveGet(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)}&fields=files(id)`
-  );
-
-  const content = JSON.stringify(entries, null, 2);
-  const blob = new Blob([content], { type: 'application/json' });
-
-  if (existing.files && existing.files.length > 0) {
-    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.files[0].id}?uploadType=media`, {
+  if (cache.dayFileIds[dateStr]) {
+    // On connaît déjà l'ID → PATCH direct, 1 seul appel
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${cache.dayFileIds[dateStr]}?uploadType=media`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: blob
     });
   } else {
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [folderId] })], { type: 'application/json' }));
-    form.append('file', blob);
-    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: form
-    });
+    // Cherche si le fichier existe déjà
+    const existing = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)}&fields=files(id)`
+    );
+    if (existing.files && existing.files.length > 0) {
+      cache.dayFileIds[dateStr] = existing.files[0].id;
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.files[0].id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: blob
+      });
+    } else {
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [folderId] })], { type: 'application/json' }));
+      form.append('file', blob);
+      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: form
+      });
+      const created = await r.json();
+      if (created.id) cache.dayFileIds[dateStr] = created.id;
+    }
   }
+  // Met à jour le cache mémoire des entrées
+  cache.dayEntries[dateStr] = entries;
 }
 
 async function loadDayEntries(dateStr) {
+  if (cache.dayEntries[dateStr]) return [...cache.dayEntries[dateStr]];
   const folderId = await getDayFolderId(dateStr);
   const filename = `${dateStr}.json`;
   const data = await driveGet(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)}&fields=files(id)`
   );
   if (!data.files || data.files.length === 0) return [];
+  cache.dayFileIds[dateStr] = data.files[0].id;
   const r = await fetch(`https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
-  return r.json();
+  const entries = await r.json();
+  cache.dayEntries[dateStr] = entries;
+  return [...entries];
 }
 
 async function listDayFolders() {
