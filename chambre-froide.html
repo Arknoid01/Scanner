@@ -572,7 +572,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -797,7 +797,11 @@ async function handlePdfFile(file) {
   showToast('Lecture du PDF…', '');
   try {
     const text = await extractPdfText(file);
+    console.log('=== TEXTE BRUT PDF ===');
+    console.log(text.slice(0, 3000));
+    console.log('=== FIN TEXTE ===');
     const items = parseFournisseur(text);
+    console.log('Items trouvés:', items.length, items);
     if (!items.length) {
       showToast('Aucun produit détecté', 'error');
       return;
