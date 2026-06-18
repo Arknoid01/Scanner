@@ -323,6 +323,64 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ─── CONGÉLATEUR ─── */
+  #btn-freezer-scan {
+    width: 100%;
+    padding: 12px;
+    background: #1a3a5c;
+    color: #7ec8e3;
+    border: 1px solid #2a5a8c;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  #btn-freezer-scan:hover { opacity: .85; }
+  #freezer-reader { width: 100%; border-radius: var(--radius); overflow: hidden; }
+  #freezer-reader video { width: 100% !important; border-radius: var(--radius); }
+  #freezer-reader__dashboard { display: none !important; }
+
+  .freezer-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .freezer-card {
+    background: var(--surface);
+    border: 1px solid #1a3a5c;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .freezer-card-info { flex: 1; }
+  .freezer-card-name { font-weight: 600; font-size: 15px; }
+  .freezer-card-date { font-size: 12px; color: #7ec8e3; margin-top: 3px; }
+  .freezer-card-age { font-size: 12px; color: var(--text-dim); }
+
+  .btn-remove {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    padding: 8px 10px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all .2s;
+    flex-shrink: 0;
+  }
+  .btn-remove:hover { border-color: var(--accent); color: var(--accent); }
+
+  .freezer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .freezer-count {
+    font-size: 13px;
+    color: #7ec8e3;
+    font-weight: 500;
+  }
+
   /* ─── ÉTIQUETTES ─── */
   .label-create-box {
     background: var(--surface);
@@ -478,6 +536,7 @@
   <div class="tab active" onclick="switchTab('scan')">📷 Scanner</div>
   <div class="tab" onclick="switchTab('history')">📅 Historique</div>
   <div class="tab" onclick="switchTab('labels')">🏷️ Étiquettes</div>
+  <div class="tab" onclick="switchTab('freezer')">🧊 Congélateur</div>
 </div>
 
 <!-- ═══ PAGE SCAN ═══ -->
@@ -515,6 +574,26 @@
   <div id="labels-list-content"></div>
 </div>
 
+<!-- ═══ PAGE CONGÉLATEUR ═══ -->
+<div class="page" id="page-freezer">
+
+  <div class="label-create-box">
+    <h3>Scanner un produit</h3>
+    <p style="font-size:13px;color:var(--text-dim);">Scanne le code-barres ou entre le nom manuellement.</p>
+    <div id="freezer-reader"></div>
+    <button id="btn-freezer-scan" onclick="startFreezerScan()">📷 Scanner</button>
+    <div style="display:flex;align-items:center;gap:10px;color:var(--text-dim);font-size:12px;">
+      <div style="flex:1;height:1px;background:var(--border);"></div>ou<div style="flex:1;height:1px;background:var(--border);"></div>
+    </div>
+    <div class="input-row">
+      <input type="text" id="freezer-manual-input" placeholder="Nom du produit…" onkeydown="if(event.key==='Enter') addFreezerManual()">
+      <button class="btn-create" onclick="addFreezerManual()">Ajouter</button>
+    </div>
+  </div>
+
+  <div id="freezer-content"></div>
+</div>
+
 <!-- ═══ PAGE HISTORIQUE ═══ -->
 <div class="page" id="page-history">
   <div class="search-bar">
@@ -531,7 +610,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -547,6 +626,9 @@ let html5QrCode = null;
 let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
+let freezerItems = []; // état actuel du congélateur
+let freezerScanActive = false;
+let freezerCodeReader = null;
 
 // ── Cache pour accélérer les uploads ──
 const cache = {
@@ -572,8 +654,8 @@ function initGoogleAuth() {
       accessToken = response.access_token;
       // Stocke le token avec son expiry (1h par défaut Google)
       const expiry = Date.now() + (response.expires_in || 3600) * 1000;
-      sessionStorage.setItem('ga_token', accessToken);
-      sessionStorage.setItem('ga_expiry', expiry);
+      localStorage.setItem('ga_token', accessToken);
+      localStorage.setItem('ga_expiry', expiry);
       setConnectedUI();
       await initDrive();
     }
@@ -1124,18 +1206,194 @@ async function loadLabels() {
 }
 
 // ═══════════════════════════════════════
+// CONGÉLATEUR
+// ═══════════════════════════════════════
+async function loadFreezerJson() {
+  if (!accessToken) return [];
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='congelateur.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (!data.files || data.files.length === 0) return [];
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  return r.json();
+}
+
+async function saveFreezerJson() {
+  const blob = new Blob([JSON.stringify(freezerItems, null, 2)], { type: 'application/json' });
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='congelateur.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (data.files && data.files.length > 0) {
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${data.files[0].id}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: blob
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: 'congelateur.json', parents: [driveFolderId] })], { type: 'application/json' }));
+    form.append('file', blob);
+    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+  }
+}
+
+async function loadFreezer() {
+  const el = document.getElementById('freezer-content');
+  if (!accessToken) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour voir le congélateur</div></div>';
+    return;
+  }
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
+  freezerItems = await loadFreezerJson();
+  renderFreezer();
+}
+
+function renderFreezer() {
+  const el = document.getElementById('freezer-content');
+  if (freezerItems.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🧊</div><div class="empty-text">Congélateur vide</div></div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="freezer-header">
+      <div class="freezer-count">${freezerItems.length} produit${freezerItems.length > 1 ? 's' : ''}</div>
+    </div>
+    <div class="freezer-list">
+      ${freezerItems.map((item, i) => `
+        <div class="freezer-card">
+          <div style="font-size:24px;">🧊</div>
+          <div class="freezer-card-info">
+            <div class="freezer-card-name">${item.nom}</div>
+            <div class="freezer-card-date">Entré le ${formatDate(item.date)}</div>
+            <div class="freezer-card-age">${daysAgo(item.date)}</div>
+          </div>
+          <button class="btn-remove" onclick="removeFreezerItem(${i})">🗑️</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+function daysAgo(dateStr) {
+  const diff = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00')) / 86400000);
+  if (diff === 0) return 'Entré aujourd'hui';
+  if (diff === 1) return 'Il y a 1 jour';
+  return `Il y a ${diff} jours`;
+}
+
+async function addFreezerItem(nom, code) {
+  if (!accessToken) { showToast('Connecte-toi d'abord', 'error'); return; }
+  if (!nom) { showToast('Nom manquant', 'error'); return; }
+  const date = new Date().toISOString().slice(0, 10);
+  freezerItems.unshift({ nom, code: code || '', date });
+  await saveFreezerJson();
+  renderFreezer();
+  showToast(`${nom} ajouté ✓`, 'success');
+}
+
+async function removeFreezerItem(index) {
+  const item = freezerItems[index];
+  if (!confirm(`Retirer "${item.nom}" du congélateur ?`)) return;
+  freezerItems.splice(index, 1);
+  await saveFreezerJson();
+  renderFreezer();
+  showToast('Retiré ✓', 'success');
+}
+
+async function addFreezerManual() {
+  const input = document.getElementById('freezer-manual-input');
+  const nom = input.value.trim();
+  if (!nom) return;
+  await addFreezerItem(nom, '');
+  input.value = '';
+}
+
+async function startFreezerScan() {
+  if (freezerScanActive) { stopFreezerScan(); return; }
+  try {
+    freezerScanActive = true;
+    document.getElementById('btn-freezer-scan').textContent = '⏹ Arrêter';
+    freezerCodeReader = new Html5Qrcode('freezer-reader');
+    await freezerCodeReader.start(
+      { facingMode: 'environment' },
+      { fps: 15, qrbox: { width: 280, height: 140 }, aspectRatio: 1.5 },
+      async (code) => {
+        if (!freezerScanActive) return;
+        stopFreezerScan();
+        const nom = produitsDict[code] || null;
+        if (nom) {
+          await addFreezerItem(nom, code);
+        } else {
+          // Demande le nom
+          const input = document.getElementById('freezer-manual-input');
+          input.value = '';
+          input.placeholder = `Nom pour ${code}…`;
+          input.focus();
+          // Stocke le code en attente
+          input.dataset.pendingCode = code;
+          showToast('Produit inconnu — entre le nom', 'error');
+        }
+      },
+      () => {}
+    );
+  } catch(e) {
+    freezerScanActive = false;
+    document.getElementById('btn-freezer-scan').textContent = '📷 Scanner';
+    showToast('Caméra inaccessible', 'error');
+  }
+}
+
+function stopFreezerScan() {
+  freezerScanActive = false;
+  if (freezerCodeReader) {
+    try { freezerCodeReader.stop(); } catch(e) {}
+    freezerCodeReader = null;
+  }
+  document.getElementById('btn-freezer-scan').textContent = '📷 Scanner';
+}
+
+// Override addFreezerManual pour gérer le code en attente
+const _origAddFreezerManual = addFreezerManual;
+async function addFreezerManual() {
+  const input = document.getElementById('freezer-manual-input');
+  const nom = input.value.trim();
+  if (!nom) return;
+  const pendingCode = input.dataset.pendingCode || '';
+  if (pendingCode && !produitsDict[pendingCode]) {
+    produitsDict[pendingCode] = nom;
+    await saveProduitsJson();
+  }
+  await addFreezerItem(nom, pendingCode);
+  input.value = '';
+  input.placeholder = 'Nom du produit…';
+  delete input.dataset.pendingCode;
+}
+
+// ═══════════════════════════════════════
 // UI HELPERS
 // ═══════════════════════════════════════
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', (tab === 'scan' && i === 0) || (tab === 'history' && i === 1) || (tab === 'labels' && i === 2));
+    t.classList.toggle('active',
+      (tab === 'scan' && i === 0) ||
+      (tab === 'history' && i === 1) ||
+      (tab === 'labels' && i === 2) ||
+      (tab === 'freezer' && i === 3)
+    );
   });
   document.getElementById('page-scan').classList.toggle('active', tab === 'scan');
   document.getElementById('page-history').classList.toggle('active', tab === 'history');
   document.getElementById('page-labels').classList.toggle('active', tab === 'labels');
+  document.getElementById('page-freezer').classList.toggle('active', tab === 'freezer');
   if (tab === 'history') loadHistory();
   if (tab === 'labels') loadLabels();
-  if (tab === 'scan') stopScan();
+  if (tab === 'freezer') loadFreezer();
+  if (tab === 'scan') { stopScan(); stopFreezerScan(); }
+  if (tab !== 'freezer') stopFreezerScan();
 }
 
 function formatDate(dateStr) {
@@ -1154,9 +1412,9 @@ function showToast(msg, type = '') {
 
 // Init
 window.addEventListener('load', () => {
-  // Tente de restaurer le token depuis sessionStorage
-  const savedToken = sessionStorage.getItem('ga_token');
-  const savedExpiry = sessionStorage.getItem('ga_expiry');
+  // Tente de restaurer le token depuis localStorage
+  const savedToken = localStorage.getItem('ga_token');
+  const savedExpiry = localStorage.getItem('ga_expiry');
   if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
     accessToken = savedToken;
     setConnectedUI();
@@ -1166,8 +1424,8 @@ window.addEventListener('load', () => {
     s.onload = () => { initGoogleAuth(); initDrive(); };
     document.head.appendChild(s);
   } else {
-    sessionStorage.removeItem('ga_token');
-    sessionStorage.removeItem('ga_expiry');
+    localStorage.removeItem('ga_token');
+    localStorage.removeItem('ga_expiry');
     const s = document.createElement('script');
     s.src = 'https://accounts.google.com/gsi/client';
     s.onload = initGoogleAuth;
