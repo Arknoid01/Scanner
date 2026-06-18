@@ -575,7 +575,10 @@
 <body>
 
 <header>
-  <div class="logo">Boucher<span>ie</span> Scanner</div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div class="logo">Boucher<span>ie</span> Scanner</div>
+    <a href="chambre-froide.html" style="font-size:12px;font-weight:600;color:var(--text-dim);text-decoration:none;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;white-space:nowrap;">🧊 Chambre froide</a>
+  </div>
   <button id="btn-auth" onclick="handleAuth()">Se connecter</button>
 </header>
 
@@ -657,7 +660,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
