@@ -531,7 +531,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -570,11 +570,19 @@ function initGoogleAuth() {
     callback: async (response) => {
       if (response.error) { showToast('Erreur auth', 'error'); return; }
       accessToken = response.access_token;
-      document.getElementById('btn-auth').textContent = '✓ Connecté';
-      document.getElementById('btn-auth').classList.add('connected');
+      // Stocke le token avec son expiry (1h par défaut Google)
+      const expiry = Date.now() + (response.expires_in || 3600) * 1000;
+      sessionStorage.setItem('ga_token', accessToken);
+      sessionStorage.setItem('ga_expiry', expiry);
+      setConnectedUI();
       await initDrive();
     }
   });
+}
+
+function setConnectedUI() {
+  document.getElementById('btn-auth').textContent = '✓ Connecté';
+  document.getElementById('btn-auth').classList.add('connected');
 }
 
 function handleAuth() {
@@ -1146,11 +1154,25 @@ function showToast(msg, type = '') {
 
 // Init
 window.addEventListener('load', () => {
-  // Charge la lib Google Identity
-  const s = document.createElement('script');
-  s.src = 'https://accounts.google.com/gsi/client';
-  s.onload = initGoogleAuth;
-  document.head.appendChild(s);
+  // Tente de restaurer le token depuis sessionStorage
+  const savedToken = sessionStorage.getItem('ga_token');
+  const savedExpiry = sessionStorage.getItem('ga_expiry');
+  if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
+    accessToken = savedToken;
+    setConnectedUI();
+    // Charge la lib puis initDrive sans redemander l'auth
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = () => { initGoogleAuth(); initDrive(); };
+    document.head.appendChild(s);
+  } else {
+    sessionStorage.removeItem('ga_token');
+    sessionStorage.removeItem('ga_expiry');
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = initGoogleAuth;
+    document.head.appendChild(s);
+  }
   cleanOldFolders();
 });
 </script>
