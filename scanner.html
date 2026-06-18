@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Scanner Boucherie</title>
+
+<!-- ZXing pour le scan -->
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface2: #22223b;
+    --accent: #e63946;
+    --accent2: #ff6b6b;
+    --text: #f0ece4;
+    --text-dim: #9090a8;
+    --green: #2dc653;
+    --border: #2e2e4a;
+    --radius: 12px;
+    --font-mono: 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .logo span { color: var(--accent); }
+
+  #btn-auth {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  #btn-auth:hover { opacity: .85; }
+  #btn-auth.connected {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--green);
+  }
+
+  /* ─── TABS ─── */
+  .tabs {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    padding: 12px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all .2s;
+    user-select: none;
+  }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ─── PAGES ─── */
+  .page { display: none; flex: 1; flex-direction: column; padding: 20px; gap: 16px; }
+  .page.active { display: flex; }
+
+  /* ─── SCANNER ─── */
+  .scanner-box {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 4/3;
+    width: 100%;
+  }
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .scan-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .scan-frame {
+    width: 60%;
+    aspect-ratio: 2/1;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,.45);
+    position: relative;
+  }
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    animation: scanline 2s linear infinite;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  @keyframes scanline {
+    0% { top: 5%; }
+    50% { top: 90%; }
+    100% { top: 5%; }
+  }
+
+  #btn-scan {
+    width: 100%;
+    padding: 16px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity .2s;
+    letter-spacing: .3px;
+  }
+  #btn-scan:hover { opacity: .88; }
+  #btn-scan:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ─── RÉSULTAT SCAN ─── */
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .result-card.visible { display: flex; }
+  .result-card.unknown { border-color: var(--accent); }
+  .result-card.known { border-color: var(--green); }
+
+  .result-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .result-name {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .result-name.unknown-label { color: var(--accent); font-size: 14px; font-weight: 500; }
+
+  .name-input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-size: 15px;
+    width: 100%;
+    outline: none;
+  }
+  .name-input:focus { border-color: var(--accent); }
+  .name-input::placeholder { color: var(--text-dim); }
+
+  .btn-save {
+    padding: 12px;
+    background: var(--green);
+    color: #0f1a12;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  .btn-save:hover { opacity: .85; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 20px;
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+    z-index: 999;
+    white-space: nowrap;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--green); color: var(--green); }
+  .toast.error { border-color: var(--accent); color: var(--accent); }
+
+  /* ─── HISTORIQUE ─── */
+  .search-bar {
+    position: relative;
+  }
+  .search-bar input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px 12px 40px;
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+  }
+  .search-bar input:focus { border-color: var(--accent); }
+  .search-bar input::placeholder { color: var(--text-dim); }
+  .search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 16px;
+    pointer-events: none;
+  }
+
+  .days-list, .entries-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .day-card:hover { border-color: var(--accent); }
+
+  .day-date { font-weight: 600; font-size: 15px; }
+  .day-count {
+    background: var(--surface2);
+    border-radius: 100px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .back-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 0;
+    background: none;
+    border: none;
+  }
+  .back-btn:hover { color: var(--text); }
+
+  .day-title {
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .entry-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+  }
+  .entry-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .entry-name { font-weight: 600; font-size: 15px; }
+  .entry-time { font-size: 12px; color: var(--text-dim); white-space: nowrap; margin-top: 2px; }
+  .entry-code { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+  .search-results-title {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; }
+
+  .loading {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 20px; height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Boucher<span>ie</span> Scanner</div>
+  <button id="btn-auth" onclick="handleAuth()">Se connecter</button>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('scan')">📷 Scanner</div>
+  <div class="tab" onclick="switchTab('history')">📅 Historique</div>
+</div>
+
+<!-- ═══ PAGE SCAN ═══ -->
+<div class="page active" id="page-scan">
+  <div class="scanner-box">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="scan-overlay">
+      <div class="scan-frame">
+        <div class="scan-line"></div>
+      </div>
+    </div>
+  </div>
+
+  <button id="btn-scan" onclick="startScan()">📷 Démarrer le scanner</button>
+
+  <div class="result-card" id="result-card">
+    <div class="result-code" id="result-code"></div>
+    <div id="result-known-area"></div>
+    <button class="btn-save" id="btn-upload" onclick="uploadEntry()">
+      ✓ Enregistrer sur Drive
+    </button>
+  </div>
+</div>
+
+<!-- ═══ PAGE HISTORIQUE ═══ -->
+<div class="page" id="page-history">
+  <div class="search-bar">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search-input" placeholder="Rechercher un produit…" oninput="handleSearch()">
+  </div>
+  <div id="history-content"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════
+// CONFIG — à remplir
+// ═══════════════════════════════════════
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
+const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+
+// ═══════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════
+let accessToken = null;
+let driveFolderId = null;
+let produitsDict = {};  // { code: nom }
+let currentScan = null; // { code, nom, date, heure }
+let tokenClient = null;
+let codeReader = null;
+let scanActive = false;
+let currentView = 'days'; // 'days' | 'day' | 'search'
+let allEntries = []; // cache pour la recherche
+
+// ═══════════════════════════════════════
+// AUTH GOOGLE
+// ═══════════════════════════════════════
+function initGoogleAuth() {
+  if (typeof google === 'undefined') {
+    setTimeout(initGoogleAuth, 500);
+    return;
+  }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: async (response) => {
+      if (response.error) { showToast('Erreur auth', 'error'); return; }
+      accessToken = response.access_token;
+      document.getElementById('btn-auth').textContent = '✓ Connecté';
+      document.getElementById('btn-auth').classList.add('connected');
+      await initDrive();
+    }
+  });
+}
+
+function handleAuth() {
+  if (accessToken) return;
+  tokenClient.requestAccessToken();
+}
+
+async function initDrive() {
+  driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  produitsDict = await loadProduitsJson();
+  showToast('Drive connecté ✓', 'success');
+}
+
+// ═══════════════════════════════════════
+// DRIVE HELPERS
+// ═══════════════════════════════════════
+async function driveGet(url) {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  return r.json();
+}
+
+async function getOrCreateFolder(name, parentId) {
+  let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  if (parentId) q += ` and '${parentId}' in parents`;
+  const data = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
+  if (data.files && data.files.length > 0) return data.files[0].id;
+
+  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
+  if (parentId) meta.parents = [parentId];
+  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(meta)
+  });
+  const f = await r.json();
+  return f.id;
+}
+
+async function loadProduitsJson() {
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='produits.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (!data.files || data.files.length === 0) return {};
+  const fileId = data.files[0].id;
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  return r.json();
+}
+
+async function saveProduitsJson() {
+  // Cherche le fichier existant
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='produits.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  const content = JSON.stringify(produitsDict, null, 2);
+  const blob = new Blob([content], { type: 'application/json' });
+
+  if (data.files && data.files.length > 0) {
+    // Mise à jour
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${data.files[0].id}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: blob
+    });
+  } else {
+    // Création
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: 'produits.json', parents: [driveFolderId] })], { type: 'application/json' }));
+    form.append('file', blob);
+    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+  }
+}
+
+async function getDayFolderId(dateStr) {
+  return await getOrCreateFolder(dateStr, driveFolderId);
+}
+
+async function uploadDayJson(dateStr, entries) {
+  const folderId = await getDayFolderId(dateStr);
+  const filename = `${dateStr}.json`;
+
+  const existing = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+
+  const content = JSON.stringify(entries, null, 2);
+  const blob = new Blob([content], { type: 'application/json' });
+
+  if (existing.files && existing.files.length > 0) {
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.files[0].id}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: blob
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [folderId] })], { type: 'application/json' }));
+    form.append('file', blob);
+    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+  }
+}
+
+async function loadDayEntries(dateStr) {
+  const folderId = await getDayFolderId(dateStr);
+  const filename = `${dateStr}.json`;
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (!data.files || data.files.length === 0) return [];
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  return r.json();
+}
+
+async function listDayFolders() {
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${driveFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&orderBy=name desc&fields=files(id,name)&pageSize=100`
+  );
+  return data.files || [];
+}
+
+// Nettoyage auto > 2 mois
+async function cleanOldFolders() {
+  if (!driveFolderId) return;
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 2);
+  const folders = await listDayFolders();
+  for (const folder of folders) {
+    const d = new Date(folder.name);
+    if (!isNaN(d) && d < cutoff) {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${folder.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+    }
+  }
+}
+
+// ═══════════════════════════════════════
+// SCANNER
+// ═══════════════════════════════════════
+async function startScan() {
+  if (scanActive) { stopScan(); return; }
+
+  try {
+    scanActive = true;
+    document.getElementById('btn-scan').textContent = '⏹ Arrêter';
+
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    // null = caméra par défaut (arrière sur mobile)
+    const videoInputDevices = await codeReader.listVideoInputDevices();
+    const backCamera = videoInputDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear') || d.label.toLowerCase().includes('environment')) || videoInputDevices[videoInputDevices.length - 1];
+    const deviceId = backCamera ? backCamera.deviceId : undefined;
+
+    codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
+      if (result && scanActive) {
+        onCodeDetected(result.getText());
+      }
+    });
+  } catch (e) {
+    showToast('Caméra inaccessible', 'error');
+  }
+}
+
+function stopScan() {
+  scanActive = false;
+  if (codeReader) { codeReader.reset(); codeReader = null; }
+  const video = document.getElementById('video');
+  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+  document.getElementById('btn-scan').textContent = '📷 Démarrer le scanner';
+}
+
+function onCodeDetected(code) {
+  stopScan();
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  const heureStr = now.toTimeString().slice(0, 5);
+  const nom = produitsDict[code] || null;
+
+  currentScan = { code, nom, date: dateStr, heure: heureStr };
+
+  const card = document.getElementById('result-card');
+  document.getElementById('result-code').textContent = code;
+
+  const area = document.getElementById('result-known-area');
+
+  if (nom) {
+    card.className = 'result-card visible known';
+    area.innerHTML = `<div class="result-name">${nom}</div>`;
+  } else {
+    card.className = 'result-card visible unknown';
+    area.innerHTML = `
+      <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
+      <input class="name-input" id="name-input" type="text" placeholder="Ex : Gratin Dauphinois" oninput="updateScanName(this.value)">
+    `;
+    setTimeout(() => document.getElementById('name-input')?.focus(), 100);
+  }
+
+  // Vibration courte
+  if (navigator.vibrate) navigator.vibrate(80);
+}
+
+function updateScanName(val) {
+  if (currentScan) currentScan.nom = val.trim();
+}
+
+async function uploadEntry() {
+  if (!accessToken) { showToast('Connecte-toi d\'abord à Drive', 'error'); return; }
+  if (!currentScan) return;
+  if (!currentScan.nom) { showToast('Donne un nom au produit', 'error'); return; }
+
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Envoi…';
+
+  try {
+    // Sauvegarde le nom si nouveau
+    if (!produitsDict[currentScan.code]) {
+      produitsDict[currentScan.code] = currentScan.nom;
+      await saveProduitsJson();
+    }
+
+    // Charge les entrées du jour et ajoute
+    const entries = await loadDayEntries(currentScan.date);
+    entries.push({ heure: currentScan.heure, code: currentScan.code, nom: currentScan.nom });
+    await uploadDayJson(currentScan.date, entries);
+
+    showToast('Enregistré ✓', 'success');
+    document.getElementById('result-card').className = 'result-card';
+    currentScan = null;
+  } catch (e) {
+    showToast('Erreur d\'upload', 'error');
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Enregistrer sur Drive';
+  }
+}
+
+// ═══════════════════════════════════════
+// HISTORIQUE
+// ═══════════════════════════════════════
+async function loadHistory() {
+  const el = document.getElementById('history-content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
+
+  if (!accessToken) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour voir l\'historique</div></div>';
+    return;
+  }
+
+  const folders = await listDayFolders();
+  if (folders.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">Aucun scan enregistré</div></div>';
+    return;
+  }
+
+  // Charge toutes les entrées pour la recherche
+  allEntries = [];
+  const counts = {};
+  for (const f of folders) {
+    const entries = await loadDayEntries(f.name);
+    counts[f.name] = entries.length;
+    entries.forEach(e => allEntries.push({ ...e, date: f.name }));
+  }
+
+  renderDaysList(folders, counts);
+}
+
+function renderDaysList(folders, counts) {
+  currentView = 'days';
+  const el = document.getElementById('history-content');
+  if (folders.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">Aucun scan</div></div>';
+    return;
+  }
+  el.innerHTML = `<div class="days-list">${folders.map(f => `
+    <div class="day-card" onclick="showDay('${f.name}')">
+      <span class="day-date">${formatDate(f.name)}</span>
+      <span class="day-count">${counts[f.name] || 0} produit${(counts[f.name] || 0) > 1 ? 's' : ''}</span>
+    </div>`).join('')}</div>`;
+}
+
+async function showDay(dateStr) {
+  currentView = 'day';
+  const el = document.getElementById('history-content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
+
+  const entries = await loadDayEntries(dateStr);
+  el.innerHTML = `
+    <button class="back-btn" onclick="loadHistory()">← Retour</button>
+    <div class="day-title">${formatDate(dateStr)}</div>
+    <div class="entries-list">
+      ${entries.length === 0
+        ? '<div class="empty-state"><div class="empty-text">Aucune entrée</div></div>'
+        : entries.map(e => renderEntry(e)).join('')
+      }
+    </div>`;
+}
+
+function renderEntry(e) {
+  return `<div class="entry-card">
+    <div class="entry-top">
+      <div class="entry-name">${e.nom}</div>
+      <div class="entry-time">${e.heure}</div>
+    </div>
+    <div class="entry-code">${e.code}</div>
+  </div>`;
+}
+
+function handleSearch() {
+  const q = document.getElementById('search-input').value.trim().toLowerCase();
+  const el = document.getElementById('history-content');
+
+  if (!q) { loadHistory(); return; }
+
+  const results = allEntries.filter(e => e.nom && e.nom.toLowerCase().includes(q));
+
+  if (results.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">Aucun résultat</div></div>';
+    return;
+  }
+
+  // Groupe par nom
+  const grouped = {};
+  results.forEach(e => {
+    if (!grouped[e.nom]) grouped[e.nom] = [];
+    grouped[e.nom].push(e);
+  });
+
+  el.innerHTML = `
+    <div class="search-results-title">${results.length} résultat${results.length > 1 ? 's' : ''}</div>
+    <div class="entries-list">
+      ${Object.entries(grouped).map(([nom, items]) => `
+        <div class="entry-card">
+          <div class="entry-name">${nom}</div>
+          <div class="entry-code">${items[0].code}</div>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
+            ${items.map(i => `<div style="font-size:12px;color:var(--text-dim);">${formatDate(i.date)} à ${i.heure}</div>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// ═══════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0) === (tab === 'scan')));
+  document.getElementById('page-scan').classList.toggle('active', tab === 'scan');
+  document.getElementById('page-history').classList.toggle('active', tab === 'history');
+  if (tab === 'history') loadHistory();
+  if (tab === 'scan') stopScan();
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 2500);
+}
+
+// Init
+window.addEventListener('load', () => {
+  // Charge la lib Google Identity
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = initGoogleAuth;
+  document.head.appendChild(s);
+  cleanOldFolders();
+});
+</script>
+</body>
+</html>
