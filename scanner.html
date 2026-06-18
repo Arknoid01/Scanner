@@ -647,7 +647,7 @@ function initGoogleAuth() {
     return;
   }
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: 186778124358-nt20evqish3otlh4d52h3gcosbog10mt.apps.googleusercontent.com,
+    client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (response) => {
       if (response.error) { showToast('Erreur auth', 'error'); return; }
