@@ -660,7 +660,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -676,6 +676,8 @@ let html5QrCode = null;
 let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
+let cfStock = null;  // cache stock chambre froide
+let cfFileId = null; // ID du fichier chambre-froide.json sur Drive
 let freezerItems = []; // état actuel du congélateur
 let selectedLabels = new Set(); // codes sélectionnés pour impression
 let freezerScanActive = false;
@@ -955,15 +957,27 @@ function onCodeDetected(code) {
         <button class="btn-edit" onclick="editScanName()">✏️ Modifier</button>
       </div>
       <div id="scan-edit-area"></div>
+      <div id="cf-badge"></div>
     `;
   } else {
     card.className = 'result-card visible unknown';
     area.innerHTML = `
       <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
       <input class="name-input" id="name-input" type="text" placeholder="Ex : Gratin Dauphinois" oninput="updateScanName(this.value)">
+      <div id="cf-badge"></div>
     `;
     setTimeout(() => document.getElementById('name-input')?.focus(), 100);
   }
+
+  // Vérifie en arrière-plan si ce code est dans la chambre froide
+  checkAndDeductFromCf(code, nom).then(cfNom => {
+    const badge = document.getElementById('cf-badge');
+    if (!badge) return;
+    if (cfNom) {
+      badge.innerHTML = `<div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">🧊 Sorti de la chambre froide : <strong>${cfNom}</strong></div>`;
+      cfStock = null; // invalide le cache pour la prochaine fois
+    }
+  });
 
   // Vibration courte
   if (navigator.vibrate) navigator.vibrate(80);
@@ -1019,6 +1033,70 @@ async function renameProduct(code, currentNom) {
   await saveProduitsJson();
   showToast(`Renommé en "${trimmed}" ✓`, 'success');
   loadHistory();
+}
+
+// ═══════════════════════════════════════
+// CHAMBRE FROIDE — sortie automatique
+// ═══════════════════════════════════════
+async function loadCfStock() {
+  if (!accessToken || !driveFolderId) return [];
+  if (cfStock) return cfStock;
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='chambre-froide.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (!data.files?.length) return [];
+  cfFileId = data.files[0].id;
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${cfFileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  cfStock = await r.json();
+  return cfStock;
+}
+
+async function loadCfMapping() {
+  if (!accessToken || !driveFolderId) return {};
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='cf-mapping.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (!data.files?.length) return {};
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${data.files[0].id}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  return r.json();
+}
+
+async function saveCfStock() {
+  if (!cfFileId || !cfStock) return;
+  const blob = new Blob([JSON.stringify(cfStock, null, 2)], { type: 'application/json' });
+  await fetch(`https://www.googleapis.com/upload/drive/v3/files/${cfFileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: blob
+  });
+}
+
+async function checkAndDeductFromCf(code, nom) {
+  // Charge stock + mapping
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  if (!stock.length) return false;
+
+  // Cherche le produit par code physique, code facture, ou via mapping
+  const codeFacture = mapping[code] || code;
+  const item = stock.find(s =>
+    s.codePhysique === code ||
+    s.codeFacture === code ||
+    s.codeFacture === codeFacture
+  );
+
+  if (!item) return false;
+
+  // Déduit 1 du stock
+  item.qty--;
+  if (item.qty <= 0) {
+    cfStock = stock.filter(s => s.id !== item.id);
+  }
+  await saveCfStock();
+  return item.nom; // retourne le nom pour afficher un badge
 }
 
 async function uploadEntry() {
