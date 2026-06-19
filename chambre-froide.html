@@ -755,23 +755,45 @@ async function driveGet(url) {
   return r.json();
 }
 
+const folderIdCache = {};
+const folderLocks = {};
+
 async function getOrCreateFolder(name, parentId) {
-  let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  if (parentId) q += ` and '${parentId}' in parents`;
-  const d = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
-  if (d.files?.length) return d.files[0].id;
-  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
-  if (parentId) meta.parents = [parentId];
-  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(meta)
-  });
-  return (await r.json()).id;
+  const cacheKey = `${parentId || 'root'}::${name}`;
+  if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+
+  const run = async () => {
+    if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+    let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+    const d = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
+    if (d.files?.length) {
+      folderIdCache[cacheKey] = d.files[0].id;
+      return d.files[0].id;
+    }
+    const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
+    if (parentId) meta.parents = [parentId];
+    const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta)
+    });
+    const id = (await r.json()).id;
+    folderIdCache[cacheKey] = id;
+    return id;
+  };
+
+  // Sérialise pour éviter de créer deux fois le même dossier en cas d'appels concurrents
+  const previous = folderLocks[cacheKey] || Promise.resolve();
+  const current = previous.then(run, run);
+  folderLocks[cacheKey] = current;
+  return current;
 }
 
 // Cache des IDs de fichiers Drive
 const fileIdCache = {};
+// Verrou anti-doublon : une écriture à la fois par nom de fichier
+const fileLocks = {};
 
 async function loadJson(filename) {
   const d = await driveGet(
@@ -786,34 +808,42 @@ async function loadJson(filename) {
 }
 
 async function saveJson(filename, data) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  if (fileIdCache[filename]) {
-    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileIdCache[filename]}?uploadType=media`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: blob
-    });
-  } else {
-    const d = await driveGet(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
-    );
-    if (d.files?.length) {
-      fileIdCache[filename] = d.files[0].id;
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${d.files[0].id}?uploadType=media`, {
+  const run = async () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    if (fileIdCache[filename]) {
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileIdCache[filename]}?uploadType=media`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: blob
       });
     } else {
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [driveFolderId] })], { type: 'application/json' }));
-      form.append('file', blob);
-      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
-      });
-      fileIdCache[filename] = (await r.json()).id;
+      const d = await driveGet(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+      );
+      if (d.files?.length) {
+        fileIdCache[filename] = d.files[0].id;
+        await fetch(`https://www.googleapis.com/upload/drive/v3/files/${d.files[0].id}?uploadType=media`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: blob
+        });
+      } else {
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [driveFolderId] })], { type: 'application/json' }));
+        form.append('file', blob);
+        const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+          method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
+        });
+        fileIdCache[filename] = (await r.json()).id;
+      }
     }
-  }
+  };
+
+  // Sérialise les écritures concurrentes sur le même fichier pour éviter les doublons sur Drive
+  const previous = fileLocks[filename] || Promise.resolve();
+  const current = previous.then(run, run);
+  fileLocks[filename] = current;
+  return current;
 }
 
 // ════════════════════════════════════════
@@ -1272,45 +1302,56 @@ function stopSortieScan() {
 }
 
 // Log une sortie dans l'historique traçabilité (même format que scanner.html)
+// Verrou anti-doublon pour les fichiers du jour (historique traçabilité)
+const historyFileLocks = {};
+
 async function logToHistory(nom, code) {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
   const heureStr = now.toTimeString().slice(0, 5);
   const filename = `${dateStr}.json`;
 
-  // Cherche ou crée le dossier du jour dans Scanner Boucherie
-  const dayFolderId = await getOrCreateFolder(dateStr, driveFolderId);
+  const run = async () => {
+    // Cherche ou crée le dossier du jour dans Scanner Boucherie
+    const dayFolderId = await getOrCreateFolder(dateStr, driveFolderId);
 
-  // Charge les entrées existantes du jour
-  const existing = await driveGet(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${dayFolderId}' in parents and trashed=false`)}&fields=files(id)`
-  );
+    // Charge les entrées existantes du jour
+    const existing = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${dayFolderId}' in parents and trashed=false`)}&fields=files(id)`
+    );
 
-  let entries = [];
-  if (existing.files?.length) {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${existing.files[0].id}?alt=media`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    entries = await r.json();
-  }
+    let entries = [];
+    if (existing.files?.length) {
+      const r = await fetch(`https://www.googleapis.com/drive/v3/files/${existing.files[0].id}?alt=media`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      entries = await r.json();
+    }
 
-  entries.push({ heure: heureStr, code, nom, source: 'chambre-froide' });
+    entries.push({ heure: heureStr, code, nom, source: 'chambre-froide' });
 
-  const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
-  if (existing.files?.length) {
-    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.files[0].id}?uploadType=media`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: blob
-    });
-  } else {
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [dayFolderId] })], { type: 'application/json' }));
-    form.append('file', blob);
-    await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
-    });
-  }
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+    if (existing.files?.length) {
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.files[0].id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: blob
+      });
+    } else {
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [dayFolderId] })], { type: 'application/json' }));
+      form.append('file', blob);
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
+      });
+    }
+  };
+
+  // Sérialise les écritures sur le même jour pour éviter les doublons
+  const previous = historyFileLocks[dateStr] || Promise.resolve();
+  const current = previous.then(run, run);
+  historyFileLocks[dateStr] = current;
+  return current;
 }
 
 async function processSortie(code) {
