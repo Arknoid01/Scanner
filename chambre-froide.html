@@ -317,15 +317,18 @@
   .btn-out {
     background: none;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-dim);
-    padding: 8px 10px;
+    padding: 4px 9px;
     font-size: 14px;
+    font-weight: 700;
     cursor: pointer;
     transition: all .2s;
     flex-shrink: 0;
+    line-height: 1.2;
   }
   .btn-out:hover { border-color: var(--red); color: var(--red); }
+  .btn-add:hover { border-color: var(--green); color: var(--green); }
 
   /* ─── SCANNER ─── */
   #scan-reader { width: 100%; border-radius: var(--radius); overflow: hidden; background: #000; }
@@ -686,7 +689,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -880,9 +883,21 @@ function renderStock() {
             </div>
           </div>
           <div class="stock-item-qty">×${item.qty}</div>
-          <button class="btn-out" onclick="removeOneItem('${item.id}')">−</button>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <button class="btn-out btn-add" onclick="addOneItem('${item.id}')">+</button>
+            <button class="btn-out" onclick="removeOneItem('${item.id}')">−</button>
+          </div>
         </div>`).join('')}
     </div>`;
+}
+
+async function addOneItem(id) {
+  const idx = stock.findIndex(i => i.id === id);
+  if (idx === -1) return;
+  stock[idx].qty++;
+  await saveJson('chambre-froide.json', stock);
+  renderStock();
+  showToast('Quantité ajustée ✓', 'success');
 }
 
 async function removeOneItem(id) {
