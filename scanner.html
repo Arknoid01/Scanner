@@ -660,7 +660,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -964,9 +964,13 @@ function onCodeDetected(code) {
     area.innerHTML = `
       <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
       <input class="name-input" id="name-input" type="text" placeholder="Ex : Gratin Dauphinois" oninput="updateScanName(this.value)">
+      <div id="cf-link-area"></div>
       <div id="cf-badge"></div>
     `;
     setTimeout(() => document.getElementById('name-input')?.focus(), 100);
+
+    // Propose de lier ce code à un article de la chambre froide sans code physique
+    showCfLinkSuggestion(code);
   }
 
   // Vérifie en arrière-plan si ce code est dans la chambre froide
@@ -981,6 +985,44 @@ function onCodeDetected(code) {
 
   // Vibration courte
   if (navigator.vibrate) navigator.vibrate(80);
+}
+
+// Propose de lier ce code physique inconnu à un article de la chambre froide
+async function showCfLinkSuggestion(code) {
+  if (!accessToken) return;
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  const sansCode = stock.filter(item => !item.codePhysique && !mapping[item.codeFacture]);
+  const area = document.getElementById('cf-link-area');
+  if (!area || !sansCode.length) return;
+
+  area.innerHTML = `
+    <div style="margin-top:10px;padding:10px 12px;background:rgba(37,99,235,.08);border:1px solid var(--border);border-radius:8px;">
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">🧊 Ou lier ce code à un article de la chambre froide :</div>
+      <select class="name-input" id="cf-link-select" style="font-size:13px;margin-bottom:8px;">
+        <option value="">— Choisir un article —</option>
+        ${sansCode.map(item => `<option value="${item.id}|${item.codeFacture}">${item.nom} (${item.codeFacture})</option>`).join('')}
+      </select>
+      <button class="btn-save" style="padding:9px;font-size:13px;" onclick="linkCfFromScan('${code}')">🔗 Lier cet article</button>
+    </div>`;
+}
+
+async function linkCfFromScan(code) {
+  const select = document.getElementById('cf-link-select');
+  const val = select?.value;
+  if (!val) { showToast('Choisis un article', 'error'); return; }
+  const [itemId, codeFacture] = val.split('|');
+
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  mapping[code] = codeFacture;
+  mapping[codeFacture] = code;
+  const item = stock.find(s => s.id === itemId);
+  if (item) item.codePhysique = code;
+
+  await Promise.all([saveCfMapping(mapping), saveCfStock()]);
+  cfStock = null;
+
+  showToast(`Lié à "${item?.nom}" ✓`, 'success');
+  document.getElementById('cf-link-area').innerHTML = '<div style="color:var(--green);font-size:13px;margin-top:8px;">✓ Lien créé</div>';
 }
 
 function updateScanName(val) {
@@ -1073,6 +1115,32 @@ async function saveCfStock() {
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: blob
   });
+}
+
+let cfMappingFileId = null;
+async function saveCfMapping(mapping) {
+  const blob = new Blob([JSON.stringify(mapping, null, 2)], { type: 'application/json' });
+  if (!cfMappingFileId) {
+    const data = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='cf-mapping.json' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+    );
+    if (data.files?.length) cfMappingFileId = data.files[0].id;
+  }
+  if (cfMappingFileId) {
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${cfMappingFileId}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: blob
+    });
+  } else {
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: 'cf-mapping.json', parents: [driveFolderId] })], { type: 'application/json' }));
+    form.append('file', blob);
+    const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
+    });
+    cfMappingFileId = (await r.json()).id;
+  }
 }
 
 async function checkAndDeductFromCf(code, nom) {
