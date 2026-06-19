@@ -686,7 +686,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -1370,36 +1370,24 @@ async function addManualItem() {
 // ════════════════════════════════════════
 // LIAISON
 // ════════════════════════════════════════
-
-// Score de similarité entre deux chaînes (0-1)
-function similarity(a, b) {
-  a = a.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
-  b = b.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (a === b) return 1;
-  const wordsA = new Set(a.split(' '));
-  const wordsB = new Set(b.split(' '));
-  const intersection = [...wordsA].filter(w => wordsB.has(w) && w.length > 2);
-  const union = new Set([...wordsA, ...wordsB]);
-  return intersection.length / Math.sqrt(wordsA.size * wordsB.size);
-}
+let liaisonProduits = {}; // cache produits.json du scanner
 
 async function loadLiaison() {
   const el = document.getElementById('liaison-content');
-  el.innerHTML = '<div class="loading"><span class="spinner"></span>Analyse en cours…</div>';
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
 
   if (!accessToken) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour continuer</div></div>';
     return;
   }
 
-  // Charge stock, mapping et produits.json du scanner
   const [stockData, mappingData, produitsData] = await Promise.all([
     loadJson('chambre-froide.json').then(d => d || []),
     loadJson('cf-mapping.json').then(d => d || {}),
     loadJson('produits.json').then(d => d || {})
   ]);
 
-  // Articles chambre froide sans code physique
+  liaisonProduits = produitsData;
   const sansCodes = stockData.filter(item => !item.codePhysique && !mappingData[item.codeFacture]);
 
   if (!sansCodes.length) {
@@ -1407,59 +1395,40 @@ async function loadLiaison() {
     return;
   }
 
-  // Pour chaque article sans code, cherche la meilleure correspondance dans produits.json
-  const suggestions = sansCodes.map(item => {
-    let best = null;
-    let bestScore = 0;
-    for (const [codePhysique, nomPhysique] of Object.entries(produitsData)) {
-      const score = similarity(item.nom, typeof nomPhysique === 'object' ? nomPhysique.nom || '' : nomPhysique);
-      if (score > bestScore) {
-        bestScore = score;
-        best = { codePhysique, nom: typeof nomPhysique === 'object' ? nomPhysique.nom || nomPhysique : nomPhysique, score };
-      }
-    }
-    return { item, suggestion: bestScore > 0.3 ? best : null };
-  });
-
-  renderLiaison(suggestions, mappingData, stockData);
+  renderLiaison(sansCodes);
 }
 
-function renderLiaison(suggestions, mappingData, stockData) {
+function renderLiaison(items) {
   const el = document.getElementById('liaison-content');
-  const hasSuggestions = suggestions.some(s => s.suggestion);
+
+  // Construit les options du menu déroulant à partir de produits.json
+  const options = Object.entries(liaisonProduits)
+    .map(([code, nom]) => ({ code, nom: typeof nom === 'object' ? (nom.nom || code) : nom }))
+    .sort((a, b) => a.nom.localeCompare(b.nom));
 
   el.innerHTML = `
-    <div style="font-size:13px;color:var(--text-dim);">${suggestions.length} article${suggestions.length > 1 ? 's' : ''} à lier</div>
+    <div style="font-size:13px;color:var(--text-dim);">${items.length} article${items.length > 1 ? 's' : ''} à lier</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
-      ${suggestions.map((s, i) => `
+      ${items.map((item, i) => `
         <div class="liaison-item" id="liaison-${i}">
           <div>
-            <div class="liaison-facture">${s.item.nom}</div>
-            <div class="liaison-facture-code">${s.item.codeFacture || '—'} · ${s.item.supplier || ''}</div>
+            <div class="liaison-facture">${item.nom}</div>
+            <div class="liaison-facture-code">${item.codeFacture || '—'} · ${item.supplier || ''}</div>
           </div>
-          ${s.suggestion ? `
-            <div class="liaison-arrow">↕️</div>
-            <div>
-              <div class="liaison-physique">${s.suggestion.nom}</div>
-              <div class="liaison-physique-code">${s.suggestion.codePhysique}</div>
-              <div class="liaison-score">Similarité ${Math.round(s.suggestion.score * 100)}%</div>
-            </div>
-            <div class="liaison-actions">
-              <button class="btn-confirm-liaison" onclick="confirmLiaison(${i}, '${s.item.codeFacture}', '${s.suggestion.codePhysique}', '${s.item.id}')">✓ Confirmer</button>
-              <button class="btn-reject-liaison" onclick="rejectLiaison(${i})">✗</button>
-            </div>
-          ` : `
-            <div style="font-size:12px;color:var(--text-dim);">Aucune correspondance trouvée — entre le code manuellement :</div>
-            <div class="liaison-manual">
-              <input type="text" id="manual-code-${i}" placeholder="Code-barres physique…" style="font-family:var(--mono)">
-              <button class="btn-link-manual" onclick="confirmManualLiaison(${i}, '${s.item.codeFacture}', '${s.item.id}')">Lier</button>
-            </div>
-          `}
+          <select class="input-field" id="liaison-select-${i}" style="font-size:14px;">
+            <option value="">— Choisir le produit scanné —</option>
+            ${options.map(o => `<option value="${o.code}">${o.nom} (${o.code})</option>`).join('')}
+          </select>
+          <button class="btn-confirm-liaison" onclick="confirmLiaison(${i}, '${item.codeFacture}', '${item.id}')">✓ Lier</button>
         </div>`).join('')}
     </div>`;
 }
 
-async function confirmLiaison(idx, codeFacture, codePhysique, itemId) {
+async function confirmLiaison(idx, codeFacture, itemId) {
+  const select = document.getElementById(`liaison-select-${idx}`);
+  const codePhysique = select?.value;
+  if (!codePhysique) { showToast('Choisis un produit', 'error'); return; }
+
   mapping[codePhysique] = codeFacture;
   mapping[codeFacture] = codePhysique;
   const item = stock.find(s => s.id === itemId);
@@ -1468,20 +1437,10 @@ async function confirmLiaison(idx, codeFacture, codePhysique, itemId) {
     saveJson('cf-mapping.json', mapping),
     saveJson('chambre-froide.json', stock)
   ]);
-  document.getElementById(`liaison-${idx}`).classList.add('confirmed');
-  document.getElementById(`liaison-${idx}`).innerHTML += '<div style="color:var(--green);font-size:13px;font-weight:700;margin-top:4px;">✓ Lié !</div>';
+  const card = document.getElementById(`liaison-${idx}`);
+  card.classList.add('confirmed');
+  card.innerHTML += '<div style="color:var(--green);font-size:13px;font-weight:700;margin-top:4px;">✓ Lié !</div>';
   showToast('Lien créé ✓', 'success');
-}
-
-async function confirmManualLiaison(idx, codeFacture, itemId) {
-  const input = document.getElementById(`manual-code-${idx}`);
-  const codePhysique = input?.value.trim();
-  if (!codePhysique) { showToast('Entre un code', 'error'); return; }
-  await confirmLiaison(idx, codeFacture, codePhysique, itemId);
-}
-
-function rejectLiaison(idx) {
-  document.getElementById(`liaison-${idx}`).classList.add('rejected');
 }
 
 function switchTab(tab) {
