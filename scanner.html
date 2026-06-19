@@ -407,6 +407,13 @@
   }
   .btn-change-dlc:hover { border-color: var(--accent); color: var(--accent); }
 
+  #meat-rafale-zone .name-input {
+    font-size: 16px;
+    text-align: center;
+    border-color: var(--accent);
+  }
+  #meat-rafale-zone .name-input:focus { box-shadow: 0 0 0 3px rgba(230,57,70,.2); }
+
   /* ─── CONGÉLATEUR ─── */
   #btn-freezer-scan {
     width: 100%;
@@ -707,6 +714,10 @@
       <span>🥩 Mode viande (réception)</span>
     </label>
     <div id="meat-mode-dlc-display" class="meat-mode-dlc" style="display:none;"></div>
+    <div id="meat-rafale-zone" style="display:none;">
+      <input type="text" id="meat-rafale-input" class="name-input" placeholder="📡 Scanner Bluetooth prêt — scanne une poche…" autocomplete="off">
+      <div style="font-size:12px;color:var(--text-dim);margin-top:6px;">Le champ reste actif — scanne en chaîne, sans rien toucher entre chaque poche.</div>
+    </div>
   </div>
 
   <div id="reader"></div>
@@ -1136,11 +1147,24 @@ function toggleMeatMode(checked) {
     meatModeDlc = parsed;
     meatModeActive = true;
     updateMeatModeDisplay();
+    stopScan(); // pas besoin de la caméra, le scanner Bluetooth fait le travail
+    document.getElementById('btn-scan').style.display = 'none';
+    document.getElementById('reader').style.display = 'none';
+    document.getElementById('meat-rafale-zone').style.display = 'block';
+    focusRafaleInput();
   } else {
     meatModeActive = false;
     meatModeDlc = null;
     document.getElementById('meat-mode-dlc-display').style.display = 'none';
+    document.getElementById('meat-rafale-zone').style.display = 'none';
+    document.getElementById('btn-scan').style.display = '';
+    document.getElementById('reader').style.display = '';
   }
+}
+
+function focusRafaleInput() {
+  const input = document.getElementById('meat-rafale-input');
+  if (input) { input.value = ''; input.focus(); }
 }
 
 function parseDlcInput(str) {
@@ -1201,6 +1225,7 @@ async function handleMeatScan(code) {
         🥩 +1 ajouté — total : ${item.qty} en stock (DLC ${formatDlcDisplay(item.dlc)})
       </div>`;
     if (navigator.vibrate) navigator.vibrate(80);
+    if (meatModeActive) focusRafaleInput(); // prêt pour la poche suivante, sans rien toucher
   } else {
     // Produit inconnu pour ce code : demande le nom une fois
     card.className = 'result-card visible unknown';
@@ -1249,6 +1274,7 @@ async function confirmMeatName(code) {
     </div>`;
   showToast(`${nom} créé ✓`, 'success');
   if (navigator.vibrate) navigator.vibrate(80);
+  if (meatModeActive) focusRafaleInput();
 }
 
 async function onCodeDetected(code) {
@@ -2073,6 +2099,24 @@ window.addEventListener('load', () => {
     document.head.appendChild(s);
   }
   cleanOldFolders();
+
+  // ── Mode rafale (scanner Bluetooth) ──
+  // Le scanner envoie les chiffres puis une touche Entrée, comme un clavier
+  const rafaleInput = document.getElementById('meat-rafale-input');
+  rafaleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const code = rafaleInput.value.trim();
+      if (code) onCodeDetected(code);
+      else focusRafaleInput();
+    }
+  });
+  // Si le focus part ailleurs pendant que le mode viande est actif, on le récupère
+  // (sauf si l'utilisateur est en train de taper le nom d'un nouveau morceau)
+  document.addEventListener('click', () => {
+    if (meatModeActive && !document.getElementById('meat-name-input')) {
+      setTimeout(() => { if (meatModeActive) focusRafaleInput(); }, 50);
+    }
+  });
 });
 </script>
 </body>
