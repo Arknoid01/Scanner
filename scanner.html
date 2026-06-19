@@ -661,7 +661,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -999,21 +999,25 @@ async function onCodeDetected(code) {
 }
 
 // Cherche une correspondance dans la chambre froide, SANS déduire
+// Si plusieurs lots existent, retourne celui avec la DLC la plus proche (FIFO)
 async function checkCfMatch(code) {
   const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
   const codeFacture = mapping[code] || code;
-  const item = stock.find(s =>
-    s.codePhysique === code ||
-    s.codeFacture === code ||
-    s.codeFacture === codeFacture
-  );
+  const candidats = stock
+    .filter(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture)
+    .sort((a, b) => {
+      const da = a.dlc ? new Date(a.dlc) : new Date('9999-12-31');
+      const db = b.dlc ? new Date(b.dlc) : new Date('9999-12-31');
+      return da - db;
+    });
+  const item = candidats[0];
 
   // Debug visible directement dans la page
   const debugInfo = `Code scanné: "${code}"
 Stock: ${stock.length} articles
 Codes physiques en stock: ${JSON.stringify(stock.map(s => s.codePhysique))}
 Mapping: ${JSON.stringify(mapping)}
-Match: ${item ? item.nom : 'AUCUN'}`;
+Match: ${item ? item.nom : 'AUCUN'}${candidats.length > 1 ? ` (${candidats.length} lots trouvés)` : ''}`;
   console.log(debugInfo);
   window._lastCfDebug = debugInfo;
 

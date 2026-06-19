@@ -686,7 +686,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -1135,15 +1135,15 @@ async function confirmImport() {
     !item.codePhysique && !mapping[item.codeFacture]
   );
 
-  // Ajoute au stock
+  // Ajoute au stock — chaque lot (même codeFacture + même DLC) reste une ligne distincte
+  // pour ne pas perdre la traçabilité des DLC les plus anciennes
   for (const item of importItems) {
     const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
 
-    // Vérifie si le produit existe déjà (même codeFacture)
-    const existing = stock.find(s => s.codeFacture === item.codeFacture);
+    // Fusionne seulement si même article ET même DLC (vrai même lot)
+    const existing = stock.find(s => s.codeFacture === item.codeFacture && s.dlc === item.dlc);
     if (existing) {
       existing.qty += item.qty;
-      existing.dlc = item.dlc || existing.dlc;
     } else {
       stock.push({
         id,
@@ -1300,8 +1300,16 @@ async function logToHistory(nom, code) {
 
 async function processSortie(code) {
   // Cherche dans le stock par code physique ou code facture
+  // Si plusieurs lots du même article existent, on sort en priorité celui avec la DLC la plus proche (FIFO)
   const codeFacture = mapping[code] || code;
-  let item = stock.find(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture);
+  const candidats = stock
+    .filter(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture)
+    .sort((a, b) => {
+      const da = a.dlc ? new Date(a.dlc) : new Date('9999-12-31');
+      const db = b.dlc ? new Date(b.dlc) : new Date('9999-12-31');
+      return da - db;
+    });
+  let item = candidats[0];
 
   const resultEl = document.getElementById('sortie-result');
   const resultContent = document.getElementById('sortie-result-content');
@@ -1322,13 +1330,14 @@ async function processSortie(code) {
     logToHistory(item.nom, code)
   ]);
 
+  const autresLots = candidats.length - 1;
   resultEl.style.display = 'block';
   resultContent.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;">
       <div style="font-size:28px;">✅</div>
       <div>
         <div style="font-size:16px;font-weight:700;">${item.nom}</div>
-        <div style="font-size:13px;color:var(--text-dim);margin-top:4px;">${item.qty > 0 ? `Il reste ${item.qty} poche${item.qty > 1 ? 's' : ''}` : 'Dernière poche — stock épuisé'}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:4px;">${item.qty > 0 ? `Il reste ${item.qty} poche${item.qty > 1 ? 's' : ''} de ce lot` : 'Dernière poche de ce lot'}${autresLots > 0 ? ` · ${autresLots} autre${autresLots>1?'s':''} lot${autresLots>1?'s':''} en stock` : ''}</div>
         <div style="font-size:12px;color:var(--ice-dim);margin-top:2px;">${dlcLabel(item.dlc)}</div>
       </div>
     </div>`;
