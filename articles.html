@@ -496,7 +496,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -820,6 +820,53 @@ function renderLinkTargetSelect(article) {
     available.map(a => `<option value="${a.id}">${a.nom} (${a.codeFacture || a.codePhysique})</option>`).join('');
 }
 
+// Liste tous les dossiers de dates dans Scanner Boucherie
+async function listDayFolders() {
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${driveFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&fields=files(id,name)&pageSize=200`
+  );
+  return data.files || [];
+}
+
+// Met à jour le nom de toutes les occurrences d'un code donné dans tous les fichiers d'historique du jour.
+// C'est ce qui fait d'articles.html la source de vérité unique : un renommage se propage partout,
+// y compris dans les entrées déjà enregistrées les jours précédents.
+async function propagateRenameToHistory(codes, newNom) {
+  const codeSet = new Set(codes.filter(Boolean));
+  if (!codeSet.size) return;
+
+  const folders = await listDayFolders();
+  for (const folder of folders) {
+    const filename = `${folder.name}.json`;
+    const fileData = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${folder.id}' in parents and trashed=false`)}&fields=files(id)`
+    );
+    if (!fileData.files?.length) continue;
+    const fileId = fileData.files[0].id;
+
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    let entries;
+    try { entries = await r.json(); } catch (e) { continue; }
+    if (!Array.isArray(entries)) continue;
+
+    let changed = false;
+    entries.forEach(e => {
+      if (codeSet.has(e.code) && e.nom !== newNom) { e.nom = newNom; changed = true; }
+    });
+
+    if (changed) {
+      const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: blob
+      });
+    }
+  }
+}
+
 async function saveArticleEdit() {
   if (!editingArticle) return;
   const newNom = document.getElementById('edit-nom').value.trim();
@@ -828,7 +875,15 @@ async function saveArticleEdit() {
 
   if (!newNom) { showToast('Le nom est requis', 'error'); return; }
 
+  const btn = document.querySelector('.btn-modal-primary');
+  const originalLabel = btn.textContent;
+  btn.textContent = '⏳ Enregistrement…';
+  btn.disabled = true;
+
   try {
+    // Tous les codes connus de cet article, pour la propagation dans l'historique
+    const allCodes = [editingArticle.codeFacture, editingArticle.codePhysique, newCodePhysique, newCodeFacture];
+
     if (editingArticle.kind === 'produit') {
       // Renomme dans produits.json
       const oldCode = editingArticle.codePhysique;
@@ -860,12 +915,18 @@ async function saveArticleEdit() {
       }
     }
 
-    showToast('Article mis à jour ✓', 'success');
+    // Propage le nouveau nom dans tout l'historique de traçabilité déjà enregistré
+    await propagateRenameToHistory(allCodes, newNom);
+
+    showToast('Article mis à jour partout ✓', 'success');
     closeEditModal();
     renderList();
   } catch (e) {
     showToast('Erreur de sauvegarde', 'error');
     console.error(e);
+  } finally {
+    btn.textContent = originalLabel;
+    btn.disabled = false;
   }
 }
 
@@ -881,6 +942,18 @@ async function deleteArticle() {
       cfStock = cfStock.filter(item => item.codeFacture !== editingArticle.codeFacture);
       await driveSaveNamedJson('chambre-froide.json', cfStock);
     }
+
+    // Nettoie les liens du mapping qui pointaient vers cet article
+    let mappingChanged = false;
+    [editingArticle.codeFacture, editingArticle.codePhysique].filter(Boolean).forEach(code => {
+      if (cfMapping[code]) {
+        delete cfMapping[cfMapping[code]];
+        delete cfMapping[code];
+        mappingChanged = true;
+      }
+    });
+    if (mappingChanged) await driveSaveNamedJson('cf-mapping.json', cfMapping);
+
     showToast('Article supprimé ✓', 'success');
     closeEditModal();
     renderList();
