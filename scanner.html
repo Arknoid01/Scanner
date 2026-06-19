@@ -660,7 +660,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -1018,11 +1018,24 @@ async function linkCfFromScan(code) {
   const item = stock.find(s => s.id === itemId);
   if (item) item.codePhysique = code;
 
-  await Promise.all([saveCfMapping(mapping), saveCfStock()]);
+  const tasks = [saveCfMapping(mapping), saveCfStock()];
+
+  // Ajoute aussi ce code dans produits.json pour que le scanner classique le reconnaisse direct
+  if (item && !produitsDict[code]) {
+    produitsDict[code] = item.nom;
+    tasks.push(saveProduitsJson());
+  }
+
+  await Promise.all(tasks);
   cfStock = null;
 
   showToast(`Lié à "${item?.nom}" ✓`, 'success');
   document.getElementById('cf-link-area').innerHTML = '<div style="color:var(--green);font-size:13px;margin-top:8px;">✓ Lien créé</div>';
+
+  // Met à jour aussi l'affichage du nom dans le scan en cours
+  if (currentScan && currentScan.code === code) {
+    currentScan.nom = item?.nom || currentScan.nom;
+  }
 }
 
 function updateScanName(val) {
