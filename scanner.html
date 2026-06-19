@@ -323,6 +323,60 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ─── MODE VIANDE ─── */
+  .meat-mode-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .meat-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+  }
+  .meat-mode-toggle input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .meat-mode-dlc {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 13px;
+    gap: 8px;
+  }
+  .meat-mode-dlc-text {
+    color: var(--accent);
+    font-weight: 700;
+    font-family: var(--font-mono);
+  }
+  .btn-change-dlc {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-change-dlc:hover { border-color: var(--accent); color: var(--accent); }
+
   /* ─── CONGÉLATEUR ─── */
   #btn-freezer-scan {
     width: 100%;
@@ -591,6 +645,15 @@
 
 <!-- ═══ PAGE SCAN ═══ -->
 <div class="page active" id="page-scan">
+
+  <div class="meat-mode-bar" id="meat-mode-bar">
+    <label class="meat-mode-toggle">
+      <input type="checkbox" id="meat-mode-checkbox" onchange="toggleMeatMode(this.checked)">
+      <span>🥩 Mode viande (réception)</span>
+    </label>
+    <div id="meat-mode-dlc-display" class="meat-mode-dlc" style="display:none;"></div>
+  </div>
+
   <div id="reader"></div>
 
   <button id="btn-scan" onclick="startScan()">📷 Démarrer le scanner</button>
@@ -683,6 +746,8 @@ let freezerItems = []; // état actuel du congélateur
 let selectedLabels = new Set(); // codes sélectionnés pour impression
 let freezerScanActive = false;
 let freezerCodeReader = null;
+let meatModeActive = false;
+let meatModeDlc = null; // DLC en cours pour le mode viande
 
 // ── Cache pour accélérer les uploads ──
 const cache = {
@@ -936,8 +1001,149 @@ async function stopScan() {
   document.getElementById('btn-scan').textContent = '📷 Démarrer le scanner';
 }
 
+// ═══════════════════════════════════════
+// MODE VIANDE — réception rapide TRADIVAL
+// ═══════════════════════════════════════
+function toggleMeatMode(checked) {
+  if (checked) {
+    const dlc = prompt('DLC pour cette bête (format JJ/MM/AAAA) :');
+    if (!dlc) {
+      document.getElementById('meat-mode-checkbox').checked = false;
+      return;
+    }
+    const parsed = parseDlcInput(dlc);
+    if (!parsed) {
+      alert('Format de date invalide. Utilise JJ/MM/AAAA');
+      document.getElementById('meat-mode-checkbox').checked = false;
+      return;
+    }
+    meatModeDlc = parsed;
+    meatModeActive = true;
+    updateMeatModeDisplay();
+  } else {
+    meatModeActive = false;
+    meatModeDlc = null;
+    document.getElementById('meat-mode-dlc-display').style.display = 'none';
+  }
+}
+
+function parseDlcInput(str) {
+  const m = str.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (!m) return null;
+  const [_, d, mo, y] = m;
+  const year = y.length === 2 ? '20' + y : y;
+  return `${year}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+}
+
+function formatDlcDisplay(dlcStr) {
+  const d = new Date(dlcStr + 'T00:00:00');
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function updateMeatModeDisplay() {
+  const display = document.getElementById('meat-mode-dlc-display');
+  if (!meatModeActive || !meatModeDlc) { display.style.display = 'none'; return; }
+  display.style.display = 'flex';
+  display.innerHTML = `
+    <span class="meat-mode-dlc-text">📅 DLC active : ${formatDlcDisplay(meatModeDlc)}</span>
+    <button class="btn-change-dlc" onclick="changeMeatDlc()">Nouvelle bête</button>
+  `;
+}
+
+function changeMeatDlc() {
+  const dlc = prompt('Nouvelle DLC (format JJ/MM/AAAA) :');
+  if (!dlc) return;
+  const parsed = parseDlcInput(dlc);
+  if (!parsed) { alert('Format invalide'); return; }
+  meatModeDlc = parsed;
+  updateMeatModeDisplay();
+  showToast('DLC mise à jour ✓', 'success');
+}
+
+// Gère un scan en mode viande : crée ou incrémente l'article dans la chambre froide
+async function handleMeatScan(code) {
+  if (!accessToken) { showToast("Connecte-toi d'abord à Drive", 'error'); return; }
+
+  const card = document.getElementById('result-card');
+  document.getElementById('result-code').textContent = code;
+  const area = document.getElementById('result-known-area');
+  card.className = 'result-card visible';
+  area.innerHTML = `<div style="color:var(--text-dim);font-size:13px;"><span class="spinner"></span>Vérification…</div>`;
+
+  const stock = await loadCfStock();
+
+  // Cherche un lot existant avec ce code physique ET cette DLC (même bête, même morceau)
+  let item = stock.find(s => s.codePhysique === code && s.dlc === meatModeDlc);
+
+  if (item) {
+    item.qty++;
+    await saveCfStock();
+    card.className = 'result-card visible known';
+    area.innerHTML = `
+      <div class="result-name">${item.nom}</div>
+      <div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">
+        🥩 +1 ajouté — total : ${item.qty} en stock (DLC ${formatDlcDisplay(item.dlc)})
+      </div>`;
+    if (navigator.vibrate) navigator.vibrate(80);
+  } else {
+    // Produit inconnu pour ce code : demande le nom une fois
+    card.className = 'result-card visible unknown';
+    area.innerHTML = `
+      <div class="result-name unknown-label">Nouveau morceau — donne-lui un nom :</div>
+      <input class="name-input" id="meat-name-input" type="text" placeholder="Ex : Flanchet avec os" onkeydown="if(event.key==='Enter') confirmMeatName('${code}')">
+      <button class="btn-save" style="margin-top:10px;" onclick="confirmMeatName('${code}')">✓ Créer l'article</button>
+    `;
+    setTimeout(() => document.getElementById('meat-name-input')?.focus(), 100);
+  }
+}
+
+async function confirmMeatName(code) {
+  const input = document.getElementById('meat-name-input');
+  const nom = input?.value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+
+  const stock = await loadCfStock();
+  const newItem = {
+    id: 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+    nom,
+    dlc: meatModeDlc,
+    qty: 1,
+    supplier: 'TRADIVAL',
+    codeFacture: code,
+    codePhysique: code,
+    dateEntree: new Date().toISOString().slice(0, 10)
+  };
+  cfStock = stock;
+  cfStock.push(newItem);
+  await saveCfStock();
+
+  // Ajoute aussi dans produits.json pour reconnaissance dans le scanner classique
+  if (!produitsDict[code]) {
+    produitsDict[code] = nom;
+    await saveProduitsJson();
+  }
+
+  const card = document.getElementById('result-card');
+  const area = document.getElementById('result-known-area');
+  card.className = 'result-card visible known';
+  area.innerHTML = `
+    <div class="result-name">${nom}</div>
+    <div style="margin-top:8px;padding:8px 12px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);border-radius:8px;font-size:13px;color:var(--green);">
+      ✓ Article créé — DLC ${formatDlcDisplay(meatModeDlc)}
+    </div>`;
+  showToast(`${nom} créé ✓`, 'success');
+  if (navigator.vibrate) navigator.vibrate(80);
+}
+
 async function onCodeDetected(code) {
   stopScan();
+
+  // ─── MODE VIANDE : réception, on ajoute/incrémente le stock plutôt que d'en sortir ───
+  if (meatModeActive) {
+    await handleMeatScan(code);
+    return;
+  }
+
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
   const heureStr = now.toTimeString().slice(0, 5);
