@@ -654,13 +654,14 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<button onclick="alert(window._lastCfDebug || 'Pas encore de scan')" style="position:fixed;bottom:16px;right:16px;z-index:999;background:#7c3aed;color:white;border:none;border-radius:50%;width:48px;height:48px;font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.4);">🐛</button>
 <div id="print-area"></div>
 
 <script>
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -1000,19 +1001,23 @@ async function onCodeDetected(code) {
 // Cherche une correspondance dans la chambre froide, SANS déduire
 async function checkCfMatch(code) {
   const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
-  console.log('=== DEBUG CF MATCH ===');
-  console.log('Code scanné:', JSON.stringify(code));
-  console.log('Stock chargé:', stock.length, 'articles');
-  console.log('Mapping:', mapping);
-  console.log('Codes physiques en stock:', stock.map(s => s.codePhysique));
-  if (!stock.length) return null;
   const codeFacture = mapping[code] || code;
   const item = stock.find(s =>
     s.codePhysique === code ||
     s.codeFacture === code ||
     s.codeFacture === codeFacture
   );
-  console.log('Match trouvé:', item);
+
+  // Debug visible directement dans la page
+  const debugInfo = `Code scanné: "${code}"
+Stock: ${stock.length} articles
+Codes physiques en stock: ${JSON.stringify(stock.map(s => s.codePhysique))}
+Mapping: ${JSON.stringify(mapping)}
+Match: ${item ? item.nom : 'AUCUN'}`;
+  console.log(debugInfo);
+  window._lastCfDebug = debugInfo;
+
+  if (!stock.length) return null;
   return item || null;
 }
 
