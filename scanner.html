@@ -720,6 +720,14 @@
     </div>
   </div>
 
+  <div class="meat-mode-bar" id="dlc-mode-bar">
+    <label class="meat-mode-toggle">
+      <input type="checkbox" id="dlc-mode-checkbox" onchange="toggleDlcMode(this.checked)">
+      <span>📅 DLC manuelle (par scan)</span>
+    </label>
+    <div style="font-size:12px;color:var(--text-dim);">Chaque scan te demande sa DLC, puis range le produit dans la chambre froide.</div>
+  </div>
+
   <div id="reader"></div>
 
   <button id="btn-scan" onclick="startScan()">📷 Démarrer le scanner</button>
@@ -815,6 +823,7 @@ let freezerScanActive = false;
 let freezerCodeReader = null;
 let meatModeActive = false;
 let meatModeDlc = null; // DLC en cours pour le mode viande
+let dlcModeActive = false; // mode DLC manuelle par scan (charcuterie sans DLC sur facture)
 
 // ── Cache pour accélérer les uploads ──
 const cache = {
@@ -1133,6 +1142,11 @@ async function stopScan() {
 // ═══════════════════════════════════════
 function toggleMeatMode(checked) {
   if (checked) {
+    // Mode viande et mode DLC manuelle sont mutuellement exclusifs
+    if (dlcModeActive) {
+      document.getElementById('dlc-mode-checkbox').checked = false;
+      dlcModeActive = false;
+    }
     const dlc = prompt('DLC pour cette bête (format JJ/MM/AAAA) :');
     if (!dlc) {
       document.getElementById('meat-mode-checkbox').checked = false;
@@ -1277,12 +1291,114 @@ async function confirmMeatName(code) {
   if (meatModeActive) focusRafaleInput();
 }
 
+// ═══════════════════════════════════════
+// MODE DLC MANUELLE — charcuterie sans DLC sur facture (ex: Chazal)
+// ═══════════════════════════════════════
+function toggleDlcMode(checked) {
+  dlcModeActive = checked;
+  if (checked) {
+    // Mode viande et mode DLC manuelle sont mutuellement exclusifs
+    if (meatModeActive) {
+      document.getElementById('meat-mode-checkbox').checked = false;
+      toggleMeatMode(false);
+    }
+  }
+}
+
+async function handleDlcModeScan(code) {
+  if (!accessToken) { showToast("Connecte-toi d'abord à Drive", 'error'); return; }
+
+  const card = document.getElementById('result-card');
+  document.getElementById('result-code').textContent = code;
+  const area = document.getElementById('result-known-area');
+  card.className = 'result-card visible';
+  area.innerHTML = `<div style="color:var(--text-dim);font-size:13px;"><span class="spinner"></span>Vérification…</div>`;
+
+  // Demande la DLC pour ce scan précis
+  const dlcStr = prompt('DLC pour ce produit (format JJ/MM/AAAA) :');
+  if (!dlcStr) { card.className = 'result-card'; return; }
+  const dlc = parseDlcInput(dlcStr);
+  if (!dlc) { alert('Format invalide. Utilise JJ/MM/AAAA'); card.className = 'result-card'; return; }
+
+  const stock = await loadCfStock();
+  let nom = produitsDict[code] || null;
+
+  // Si le produit n'a pas encore de nom connu, on le demande
+  if (!nom) {
+    card.className = 'result-card visible unknown';
+    area.innerHTML = `
+      <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
+      <input class="name-input" id="dlc-name-input" type="text" placeholder="Ex : Saucisson sec" onkeydown="if(event.key==='Enter') confirmDlcModeName('${code}','${dlc}')">
+      <button class="btn-save" style="margin-top:10px;" onclick="confirmDlcModeName('${code}','${dlc}')">✓ Ajouter à la chambre froide</button>
+    `;
+    setTimeout(() => document.getElementById('dlc-name-input')?.focus(), 100);
+    return;
+  }
+
+  await addToColdStorageWithDlc(code, nom, dlc, stock);
+}
+
+async function confirmDlcModeName(code, dlc) {
+  const input = document.getElementById('dlc-name-input');
+  const nom = input?.value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+
+  // Sauvegarde aussi dans produits.json pour reconnaissance future
+  if (!produitsDict[code]) {
+    produitsDict[code] = nom;
+    await saveProduitsJson();
+  }
+
+  const stock = await loadCfStock();
+  await addToColdStorageWithDlc(code, nom, dlc, stock);
+}
+
+async function addToColdStorageWithDlc(code, nom, dlc, stock) {
+  // Regroupe avec un lot existant si même code ET même DLC
+  let item = stock.find(s => (s.codePhysique === code || s.codeFacture === code) && s.dlc === dlc);
+
+  if (item) {
+    item.qty++;
+  } else {
+    item = {
+      id: 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      nom,
+      dlc,
+      qty: 1,
+      supplier: 'Saisie manuelle',
+      codeFacture: code,
+      codePhysique: code,
+      dateEntree: new Date().toISOString().slice(0, 10)
+    };
+    cfStock = stock;
+    cfStock.push(item);
+  }
+  await saveCfStock();
+
+  const card = document.getElementById('result-card');
+  const area = document.getElementById('result-known-area');
+  card.className = 'result-card visible known';
+  area.innerHTML = `
+    <div class="result-name">${nom}</div>
+    <div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">
+      🧊 Ajouté à la chambre froide — DLC ${formatDlcDisplay(dlc)} — total : ${item.qty}
+    </div>`;
+  showToast(`${nom} ajouté ✓`, 'success');
+  if (navigator.vibrate) navigator.vibrate(80);
+}
+
 async function onCodeDetected(code) {
   stopScan();
 
   // ─── MODE VIANDE : réception, on ajoute/incrémente le stock plutôt que d'en sortir ───
   if (meatModeActive) {
     await handleMeatScan(code);
+    return;
+  }
+
+  // ─── MODE DLC MANUELLE : ajoute le produit à la chambre froide avec une DLC saisie au scan ───
+  if (dlcModeActive) {
+    await handleDlcModeScan(code);
     return;
   }
 
