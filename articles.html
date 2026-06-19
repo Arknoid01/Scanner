@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a1628">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Articles — Boucherie Amiot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a1628;
+    --surface:  #0f1e35;
+    --surface2: #162540;
+    --border:   #1e3355;
+    --blue:     #2563eb;
+    --blue-dim: #1e3a6e;
+    --ice:      #7dd3fc;
+    --ice-dim:  #38607a;
+    --text:     #e2eaf4;
+    --text-dim: #6b8aaa;
+    --green:    #22c55e;
+    --yellow:   #f59e0b;
+    --red:      #ef4444;
+    --purple:   #a78bfa;
+    --font:     'Space Grotesk', sans-serif;
+    --mono:     'Space Mono', monospace;
+    --radius:   12px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: radial-gradient(ellipse at 30% 20%, rgba(37,99,235,.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, rgba(125,211,252,.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .back-btn { color: var(--text-dim); text-decoration: none; font-size: 18px; line-height: 1; transition: color .2s; }
+  .back-btn:hover { color: var(--ice); }
+  .logo { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+  .logo span { color: var(--ice); }
+
+  #btn-auth {
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity .2s;
+  }
+  #btn-auth:hover { opacity: .85; }
+  #btn-auth.connected { background: var(--surface2); border: 1px solid var(--border); color: var(--green); }
+
+  main {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: relative;
+    z-index: 1;
+    max-width: 720px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* ─── BARRE OUTILS ─── */
+  .toolbar {
+    display: flex;
+    gap: 10px;
+  }
+  .search-box {
+    flex: 1;
+    position: relative;
+  }
+  .search-box input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 11px 14px 11px 38px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .search-box input:focus { border-color: var(--ice); }
+  .search-box input::placeholder { color: var(--text-dim); }
+  .search-icon { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--text-dim); font-size: 14px; }
+
+  .filter-chips {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .chip {
+    flex-shrink: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 6px 13px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all .2s;
+    white-space: nowrap;
+  }
+  .chip.active { background: var(--blue-dim); border-color: var(--ice-dim); color: var(--ice); }
+
+  .stats-bar {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ─── LISTE ARTICLES ─── */
+  .article-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .article-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 16px;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .article-card:hover { border-color: var(--ice-dim); }
+  .article-card.linked { border-left: 3px solid var(--purple); }
+
+  .article-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .article-name { font-size: 15px; font-weight: 600; }
+  .article-source {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .source-manuel { background: rgba(125,211,252,.15); color: var(--ice); }
+  .source-facture { background: rgba(34,197,94,.15); color: var(--green); }
+  .source-etiquette { background: rgba(245,158,11,.15); color: var(--yellow); }
+
+  .article-codes {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .code-tag {
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+  .code-tag.empty { color: var(--red); font-style: italic; font-family: var(--font); }
+
+  .linked-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--purple);
+    margin-top: 6px;
+    font-weight: 600;
+  }
+
+  .empty-state { text-align: center; padding: 50px 20px; }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; color: var(--text-dim); }
+
+  .loading { text-align: center; padding: 40px; color: var(--text-dim); font-size: 14px; }
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--ice);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── MODAL ÉDITION ─── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 1000;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal-sheet {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    padding: 22px 20px 28px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 88vh;
+    overflow-y: auto;
+    animation: slideUp .25s ease-out;
+  }
+  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .modal-handle {
+    width: 36px; height: 4px;
+    background: var(--border);
+    border-radius: 100px;
+    margin: 0 auto 18px;
+  }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .modal-subtitle { font-size: 12px; color: var(--text-dim); margin-bottom: 18px; }
+
+  .field-group { margin-bottom: 14px; }
+  .field-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .field-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 13px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .field-input:focus { border-color: var(--ice); }
+  .field-input.mono { font-family: var(--mono); font-size: 13px; }
+
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .btn-modal-primary {
+    flex: 1;
+    padding: 13px;
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .btn-modal-secondary {
+    padding: 13px 18px;
+    background: none;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .btn-modal-danger {
+    padding: 13px 18px;
+    background: rgba(239,68,68,.1);
+    color: var(--red);
+    border: 1px solid rgba(239,68,68,.3);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+
+  .section-divider {
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+    padding-top: 18px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ice);
+    margin-bottom: 4px;
+  }
+  .section-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  .linked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .linked-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(167,139,250,.08);
+    border: 1px solid rgba(167,139,250,.25);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .linked-item-name { font-size: 13px; font-weight: 600; color: var(--purple); }
+  .linked-item-code { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+  .btn-unlink {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .btn-unlink:hover { color: var(--red); }
+
+  .link-search-row {
+    display: flex;
+    gap: 8px;
+  }
+  .link-search-row select { flex: 1; }
+  .btn-link-add {
+    background: var(--blue-dim);
+    color: var(--ice);
+    border: 1px solid var(--ice-dim);
+    border-radius: 8px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    white-space: nowrap;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 20px;
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+    z-index: 1100;
+    white-space: nowrap;
+    font-family: var(--font);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--green); color: var(--green); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a class="back-btn" href="scanner.html">←</a>
+    <div class="logo">Gestion <span>Articles</span></div>
+  </div>
+  <button id="btn-auth" onclick="handleAuth()">Connexion</button>
+</header>
+
+<main>
+  <div class="toolbar">
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Rechercher un article ou un code…" oninput="renderList()">
+    </div>
+  </div>
+
+  <div class="filter-chips">
+    <div class="chip active" data-filter="all" onclick="setFilter('all')">Tous</div>
+    <div class="chip" data-filter="manuel" onclick="setFilter('manuel')">📷 Scan manuel</div>
+    <div class="chip" data-filter="facture" onclick="setFilter('facture')">📄 Facture</div>
+    <div class="chip" data-filter="etiquette" onclick="setFilter('etiquette')">🏷️ Étiquette</div>
+    <div class="chip" data-filter="sanscode" onclick="setFilter('sanscode')">⚠️ Sans code</div>
+  </div>
+
+  <div class="stats-bar" id="stats-bar"></div>
+
+  <div id="article-list-content">
+    <div class="empty-state">
+      <div class="empty-icon">🔒</div>
+      <div class="empty-text">Connecte-toi pour gérer tes articles</div>
+    </div>
+  </div>
+</main>
+
+<!-- ═══ MODAL ÉDITION ═══ -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modal-title">Modifier l'article</div>
+    <div class="modal-subtitle" id="modal-subtitle"></div>
+
+    <div class="field-group">
+      <label class="field-label">Nom du produit</label>
+      <input type="text" class="field-input" id="edit-nom">
+    </div>
+
+    <div class="field-row">
+      <div class="field-group">
+        <label class="field-label">Code facture</label>
+        <input type="text" class="field-input mono" id="edit-code-facture" placeholder="—">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Code physique</label>
+        <input type="text" class="field-input mono" id="edit-code-physique" placeholder="Aucun">
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-primary" onclick="saveArticleEdit()">✓ Enregistrer</button>
+      <button class="btn-modal-secondary" onclick="closeEditModal()">Annuler</button>
+    </div>
+
+    <div class="section-divider">
+      <div class="section-title">🔗 Articles liés</div>
+      <div class="section-desc">Fusionne deux entrées qui désignent en fait le même produit (ex : un code créé manuellement et un code de facture).</div>
+
+      <div class="linked-list" id="linked-list"></div>
+
+      <div class="link-search-row">
+        <select class="field-input" id="link-target-select">
+          <option value="">— Choisir un article à lier —</option>
+        </select>
+        <button class="btn-link-add" onclick="addLink()">Lier</button>
+      </div>
+    </div>
+
+    <div class="section-divider">
+      <button class="btn-modal-danger" style="width:100%;" onclick="deleteArticle()">🗑️ Supprimer cet article</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
+
+// ════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════
+let accessToken = null;
+let driveFolderId = null;
+let tokenClient = null;
+let produitsDict = {};   // { code: nom } — depuis produits.json (scan manuel + étiquettes)
+let cfStock = [];         // depuis chambre-froide.json (articles facture)
+let cfMapping = {};       // depuis cf-mapping.json (liens code physique <-> code facture)
+let currentFilter = 'all';
+let editingArticle = null; // { kind: 'produit'|'facture', code, nom, ... }
+const fileIdCache = {};
+const fileLocks = {};
+
+// ════════════════════════════════════════
+// AUTH
+// ════════════════════════════════════════
+function initGoogleAuth() {
+  if (typeof google === 'undefined') { setTimeout(initGoogleAuth, 300); return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: async (r) => {
+      if (r.error) { showToast('Erreur auth', 'error'); return; }
+      accessToken = r.access_token;
+      const expiry = Date.now() + (r.expires_in || 3600) * 1000;
+      localStorage.setItem('cf_token', accessToken);
+      localStorage.setItem('cf_expiry', expiry);
+      setConnectedUI();
+      await initDrive();
+    }
+  });
+}
+
+function setConnectedUI() {
+  const btn = document.getElementById('btn-auth');
+  btn.textContent = '✓ Connecté';
+  btn.classList.add('connected');
+}
+
+function handleAuth() {
+  if (accessToken) return;
+  tokenClient.requestAccessToken();
+}
+
+async function initDrive() {
+  driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  const [p, c, m] = await Promise.all([
+    driveLoadNamedJson('produits.json'),
+    driveLoadNamedJson('chambre-froide.json'),
+    driveLoadNamedJson('cf-mapping.json')
+  ]);
+  produitsDict = p || {};
+  cfStock = c || [];
+  cfMapping = m || {};
+  renderList();
+  showToast('Drive connecté ✓', 'success');
+}
+
+// ════════════════════════════════════════
+// DRIVE HELPERS (avec verrou anti-doublon)
+// ════════════════════════════════════════
+async function driveGet(url) {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  return r.json();
+}
+
+const folderIdCache = {};
+const folderLocks = {};
+
+async function getOrCreateFolder(name, parentId) {
+  const cacheKey = `${parentId || 'root'}::${name}`;
+  if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+  const run = async () => {
+    if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+    let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+    const d = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
+    if (d.files?.length) { folderIdCache[cacheKey] = d.files[0].id; return d.files[0].id; }
+    const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
+    if (parentId) meta.parents = [parentId];
+    const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta)
+    });
+    const id = (await r.json()).id;
+    folderIdCache[cacheKey] = id;
+    return id;
+  };
+  const previous = folderLocks[cacheKey] || Promise.resolve();
+  const current = previous.then(run, run);
+  folderLocks[cacheKey] = current;
+  return current;
+}
+
+async function driveFindFileId(filename) {
+  if (fileIdCache[filename]) return fileIdCache[filename];
+  const data = await driveGet(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+  );
+  if (data.files?.length) { fileIdCache[filename] = data.files[0].id; return data.files[0].id; }
+  return null;
+}
+
+async function driveLoadNamedJson(filename) {
+  const fileId = await driveFindFileId(filename);
+  if (!fileId) return null;
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  return r.json();
+}
+
+async function driveSaveNamedJson(filename, data) {
+  const run = async () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    let fileId = await driveFindFileId(filename);
+    if (fileId) {
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: blob
+      });
+    } else {
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [driveFolderId] })], { type: 'application/json' }));
+      form.append('file', blob);
+      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
+      });
+      const created = await r.json();
+      if (created.id) fileIdCache[filename] = created.id;
+    }
+  };
+  const previous = fileLocks[filename] || Promise.resolve();
+  const current = previous.then(run, run);
+  fileLocks[filename] = current;
+  return current;
+}
+
+// ════════════════════════════════════════
+// CONSTRUCTION DE LA LISTE UNIFIÉE
+// ════════════════════════════════════════
+function buildUnifiedList() {
+  const items = [];
+
+  // Articles depuis produits.json (scan manuel ou étiquette maison)
+  for (const [code, nom] of Object.entries(produitsDict)) {
+    const isLabel = code.startsWith('BA');
+    items.push({
+      id: 'p_' + code,
+      kind: 'produit',
+      nom: typeof nom === 'object' ? (nom.nom || code) : nom,
+      codeFacture: null,
+      codePhysique: code,
+      source: isLabel ? 'etiquette' : 'manuel'
+    });
+  }
+
+  // Articles depuis chambre-froide.json (facture)
+  // On dédoublonne par codeFacture (plusieurs lots possibles avec DLC différentes)
+  const seenFacture = new Set();
+  for (const item of cfStock) {
+    if (seenFacture.has(item.codeFacture)) continue;
+    seenFacture.add(item.codeFacture);
+    items.push({
+      id: 'f_' + item.codeFacture,
+      kind: 'facture',
+      nom: item.nom,
+      codeFacture: item.codeFacture,
+      codePhysique: item.codePhysique || cfMapping[item.codeFacture] || null,
+      source: 'facture',
+      supplier: item.supplier
+    });
+  }
+
+  return items;
+}
+
+function getLinkedArticles(article) {
+  // Articles liés = ceux dont le code physique correspond au mapping de cet article
+  const linked = [];
+  const all = buildUnifiedList();
+  if (article.codeFacture && cfMapping[article.codeFacture]) {
+    const linkedCode = cfMapping[article.codeFacture];
+    const found = all.find(a => a.codePhysique === linkedCode || a.codeFacture === linkedCode);
+    if (found && found.id !== article.id) linked.push(found);
+  }
+  if (article.codePhysique && cfMapping[article.codePhysique]) {
+    const linkedCode = cfMapping[article.codePhysique];
+    const found = all.find(a => a.codeFacture === linkedCode || a.codePhysique === linkedCode);
+    if (found && found.id !== article.id && !linked.find(l => l.id === found.id)) linked.push(found);
+  }
+  return linked;
+}
+
+// ════════════════════════════════════════
+// RENDU LISTE
+// ════════════════════════════════════════
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.filter === f));
+  renderList();
+}
+
+function renderList() {
+  const el = document.getElementById('article-list-content');
+  if (!accessToken) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-text">Connecte-toi pour gérer tes articles</div></div>';
+    return;
+  }
+
+  const query = document.getElementById('search-input').value.trim().toLowerCase();
+  let items = buildUnifiedList();
+
+  if (currentFilter === 'sanscode') {
+    items = items.filter(a => !a.codePhysique);
+  } else if (currentFilter !== 'all') {
+    items = items.filter(a => a.source === currentFilter);
+  }
+
+  if (query) {
+    items = items.filter(a =>
+      a.nom.toLowerCase().includes(query) ||
+      (a.codeFacture || '').toLowerCase().includes(query) ||
+      (a.codePhysique || '').toLowerCase().includes(query)
+    );
+  }
+
+  items.sort((a, b) => a.nom.localeCompare(b.nom));
+
+  document.getElementById('stats-bar').textContent = `${items.length} article${items.length > 1 ? 's' : ''}`;
+
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">Aucun article trouvé</div></div>';
+    return;
+  }
+
+  el.innerHTML = `<div class="article-list">${items.map(a => renderArticleCard(a)).join('')}</div>`;
+}
+
+function renderArticleCard(a) {
+  const linked = getLinkedArticles(a);
+  const sourceLabel = { manuel: '📷 Scan', facture: '📄 ' + (a.supplier || 'Facture'), etiquette: '🏷️ Étiquette' }[a.source];
+  const sourceClass = { manuel: 'source-manuel', facture: 'source-facture', etiquette: 'source-etiquette' }[a.source];
+
+  return `
+    <div class="article-card ${linked.length ? 'linked' : ''}" onclick="openEditModal('${a.id}')">
+      <div class="article-top">
+        <div class="article-name">${a.nom}</div>
+        <div class="article-source ${sourceClass}">${sourceLabel}</div>
+      </div>
+      <div class="article-codes">
+        ${a.codeFacture ? `<span class="code-tag">📄 ${a.codeFacture}</span>` : ''}
+        ${a.codePhysique
+          ? `<span class="code-tag">🏷️ ${a.codePhysique}</span>`
+          : '<span class="code-tag empty">⚠️ Sans code physique</span>'}
+      </div>
+      ${linked.length ? `<div class="linked-badge">🔗 Lié à ${linked.length} article${linked.length > 1 ? 's' : ''}</div>` : ''}
+    </div>`;
+}
+
+// ════════════════════════════════════════
+// MODAL ÉDITION
+// ════════════════════════════════════════
+function openEditModal(id) {
+  const all = buildUnifiedList();
+  const article = all.find(a => a.id === id);
+  if (!article) return;
+  editingArticle = article;
+
+  document.getElementById('modal-title').textContent = article.nom;
+  document.getElementById('modal-subtitle').textContent =
+    article.source === 'facture' ? `Importé via facture${article.supplier ? ' — ' + article.supplier : ''}`
+    : article.source === 'etiquette' ? 'Étiquette créée dans l\'app'
+    : 'Ajouté via scan manuel';
+
+  document.getElementById('edit-nom').value = article.nom;
+  document.getElementById('edit-code-facture').value = article.codeFacture || '';
+  document.getElementById('edit-code-physique').value = article.codePhysique || '';
+
+  renderLinkedList(article);
+  renderLinkTargetSelect(article);
+
+  document.getElementById('edit-modal').classList.add('visible');
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('visible');
+  editingArticle = null;
+}
+
+function renderLinkedList(article) {
+  const linked = getLinkedArticles(article);
+  const el = document.getElementById('linked-list');
+  if (!linked.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-dim);">Aucun article lié pour le moment.</div>';
+    return;
+  }
+  el.innerHTML = linked.map(l => `
+    <div class="linked-item">
+      <div>
+        <div class="linked-item-name">${l.nom}</div>
+        <div class="linked-item-code">${l.codeFacture || l.codePhysique}</div>
+      </div>
+      <button class="btn-unlink" onclick="unlinkArticle('${l.id}')">Délier ✕</button>
+    </div>`).join('');
+}
+
+function renderLinkTargetSelect(article) {
+  const select = document.getElementById('link-target-select');
+  const all = buildUnifiedList().filter(a => a.id !== article.id);
+  const linkedIds = getLinkedArticles(article).map(l => l.id);
+  const available = all.filter(a => !linkedIds.includes(a.id));
+
+  select.innerHTML = '<option value="">— Choisir un article à lier —</option>' +
+    available.map(a => `<option value="${a.id}">${a.nom} (${a.codeFacture || a.codePhysique})</option>`).join('');
+}
+
+async function saveArticleEdit() {
+  if (!editingArticle) return;
+  const newNom = document.getElementById('edit-nom').value.trim();
+  const newCodeFacture = document.getElementById('edit-code-facture').value.trim();
+  const newCodePhysique = document.getElementById('edit-code-physique').value.trim();
+
+  if (!newNom) { showToast('Le nom est requis', 'error'); return; }
+
+  try {
+    if (editingArticle.kind === 'produit') {
+      // Renomme dans produits.json
+      const oldCode = editingArticle.codePhysique;
+      if (newCodePhysique && newCodePhysique !== oldCode) {
+        delete produitsDict[oldCode];
+        produitsDict[newCodePhysique] = newNom;
+      } else {
+        produitsDict[oldCode] = newNom;
+      }
+      await driveSaveNamedJson('produits.json', produitsDict);
+    } else {
+      // Met à jour tous les lots de ce codeFacture dans chambre-froide.json
+      cfStock.forEach(item => {
+        if (item.codeFacture === editingArticle.codeFacture) {
+          item.nom = newNom;
+          if (newCodePhysique) item.codePhysique = newCodePhysique;
+        }
+      });
+      await driveSaveNamedJson('chambre-froide.json', cfStock);
+
+      // Met à jour le mapping si le code physique a changé
+      if (newCodePhysique && newCodePhysique !== editingArticle.codePhysique) {
+        if (editingArticle.codePhysique) {
+          delete cfMapping[editingArticle.codePhysique];
+        }
+        cfMapping[newCodePhysique] = editingArticle.codeFacture;
+        cfMapping[editingArticle.codeFacture] = newCodePhysique;
+        await driveSaveNamedJson('cf-mapping.json', cfMapping);
+      }
+    }
+
+    showToast('Article mis à jour ✓', 'success');
+    closeEditModal();
+    renderList();
+  } catch (e) {
+    showToast('Erreur de sauvegarde', 'error');
+    console.error(e);
+  }
+}
+
+async function deleteArticle() {
+  if (!editingArticle) return;
+  if (!confirm(`Supprimer "${editingArticle.nom}" ? Cette action est irréversible.`)) return;
+
+  try {
+    if (editingArticle.kind === 'produit') {
+      delete produitsDict[editingArticle.codePhysique];
+      await driveSaveNamedJson('produits.json', produitsDict);
+    } else {
+      cfStock = cfStock.filter(item => item.codeFacture !== editingArticle.codeFacture);
+      await driveSaveNamedJson('chambre-froide.json', cfStock);
+    }
+    showToast('Article supprimé ✓', 'success');
+    closeEditModal();
+    renderList();
+  } catch (e) {
+    showToast('Erreur de suppression', 'error');
+  }
+}
+
+// ════════════════════════════════════════
+// LIER / DÉLIER
+// ════════════════════════════════════════
+async function addLink() {
+  if (!editingArticle) return;
+  const select = document.getElementById('link-target-select');
+  const targetId = select.value;
+  if (!targetId) { showToast('Choisis un article', 'error'); return; }
+
+  const all = buildUnifiedList();
+  const target = all.find(a => a.id === targetId);
+  if (!target) return;
+
+  // On lie via les codes : codeA <-> codeB dans cf-mapping.json
+  const codeA = editingArticle.codeFacture || editingArticle.codePhysique;
+  const codeB = target.codeFacture || target.codePhysique;
+  if (!codeA || !codeB) { showToast('Code manquant pour créer le lien', 'error'); return; }
+
+  cfMapping[codeA] = codeB;
+  cfMapping[codeB] = codeA;
+
+  try {
+    await driveSaveNamedJson('cf-mapping.json', cfMapping);
+    showToast(`Lié à "${target.nom}" ✓`, 'success');
+    renderLinkedList(editingArticle);
+    renderLinkTargetSelect(editingArticle);
+    renderList();
+  } catch (e) {
+    showToast('Erreur de liaison', 'error');
+  }
+}
+
+async function unlinkArticle(targetId) {
+  if (!editingArticle) return;
+  const all = buildUnifiedList();
+  const target = all.find(a => a.id === targetId);
+  if (!target) return;
+
+  const codeA = editingArticle.codeFacture || editingArticle.codePhysique;
+  const codeB = target.codeFacture || target.codePhysique;
+
+  delete cfMapping[codeA];
+  delete cfMapping[codeB];
+
+  try {
+    await driveSaveNamedJson('cf-mapping.json', cfMapping);
+    showToast('Lien supprimé', 'success');
+    renderLinkedList(editingArticle);
+    renderLinkTargetSelect(editingArticle);
+    renderList();
+  } catch (e) {
+    showToast('Erreur', 'error');
+  }
+}
+
+// ════════════════════════════════════════
+// TOAST
+// ════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 2500);
+}
+
+// ════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════
+window.addEventListener('load', () => {
+  const savedToken = localStorage.getItem('cf_token');
+  const savedExpiry = localStorage.getItem('cf_expiry');
+  if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
+    accessToken = savedToken;
+    setConnectedUI();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = () => { initGoogleAuth(); initDrive(); };
+    document.head.appendChild(s);
+  } else {
+    localStorage.removeItem('cf_token');
+    localStorage.removeItem('cf_expiry');
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = initGoogleAuth;
+    document.head.appendChild(s);
+  }
+});
+</script>
+</body>
+</html>
