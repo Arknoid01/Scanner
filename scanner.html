@@ -43,19 +43,48 @@
   header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 14px 20px;
+    padding: 12px 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 10px;
     position: sticky;
     top: 0;
     z-index: 100;
+  }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .header-links {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .header-link {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-decoration: none;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 11px;
+    white-space: nowrap;
+    cursor: pointer;
+    font-family: inherit;
   }
 
   .logo {
     font-size: 18px;
     font-weight: 700;
     letter-spacing: -0.5px;
+    white-space: nowrap;
   }
   .logo span { color: var(--accent); }
 
@@ -63,6 +92,7 @@
     background: var(--accent);
     color: white;
     border: none;
+    flex-shrink: 0;
     border-radius: 8px;
     padding: 8px 16px;
     font-size: 13px;
@@ -629,12 +659,15 @@
 <body>
 
 <header>
-  <div style="display:flex;align-items:center;gap:12px;">
+  <div class="header-row">
     <div class="logo">Boucher<span>ie</span> Scanner</div>
-    <a href="chambre-froide.html" style="font-size:12px;font-weight:600;color:var(--text-dim);text-decoration:none;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;white-space:nowrap;">🧊 Chambre froide</a>
-    <button onclick="openImportModal()" style="font-size:12px;font-weight:600;color:var(--text-dim);background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;white-space:nowrap;cursor:pointer;">📥 Importer</button>
+    <button id="btn-auth" onclick="handleAuth()">Se connecter</button>
   </div>
-  <button id="btn-auth" onclick="handleAuth()">Se connecter</button>
+  <div class="header-links">
+    <a href="chambre-froide.html" class="header-link">🧊 Chambre froide</a>
+    <a href="articles.html" class="header-link">📋 Articles</a>
+    <button class="header-link" onclick="openImportModal()">📥 Importer</button>
+  </div>
 </header>
 
 <!-- Modal d'import JSON -->
