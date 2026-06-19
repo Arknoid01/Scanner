@@ -718,6 +718,7 @@
 
 <div class="toast" id="toast"></div>
 <button onclick="alert(window._lastCfDebug || 'Pas encore de scan')" style="position:fixed;bottom:16px;right:16px;z-index:999;background:#7c3aed;color:white;border:none;border-radius:50%;width:48px;height:48px;font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.4);">🐛</button>
+<button onclick="alert(window._lastFindDebug || 'Pas encore de recherche')" style="position:fixed;bottom:16px;right:72px;z-index:999;background:#0891b2;color:white;border:none;border-radius:50%;width:48px;height:48px;font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.4);">🔍</button>
 <div id="print-area"></div>
 
 <script>
@@ -765,9 +766,12 @@ const driveFileIdCache = {}; // { filename: fileId } — une fois trouvé/créé
 
 async function driveFindFileId(filename) {
   if (driveFileIdCache[filename]) return driveFileIdCache[filename];
-  const data = await driveGet(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
-  );
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`;
+  const data = await driveGet(url);
+  window._lastFindDebug = `driveFindFileId("${filename}")
+URL: ${url}
+driveFolderId utilisé: ${driveFolderId}
+Réponse brute: ${JSON.stringify(data)}`;
   if (data.files?.length) {
     driveFileIdCache[filename] = data.files[0].id;
     return data.files[0].id;
