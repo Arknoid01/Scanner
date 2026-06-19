@@ -1648,6 +1648,13 @@ async function loadLabels() {
 
   const labels = Object.entries(produitsDict).filter(([code]) => code.startsWith('BA'));
 
+  window._lastCfDebug = `=== DEBUG ÉTIQUETTES ===
+accessToken présent: ${!!accessToken}
+driveFolderId: ${driveFolderId}
+produitsDict keys count: ${Object.keys(produitsDict).length}
+produitsDict content: ${JSON.stringify(produitsDict)}
+labels filtrés (BA): ${labels.length}`;
+
   if (labels.length === 0) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🏷️</div><div class="empty-text">Aucune étiquette créée</div></div>';
     return;
@@ -1766,6 +1773,13 @@ async function loadFreezer() {
   }
   el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
   freezerItems = await loadFreezerJson();
+
+  window._lastCfDebug = `=== DEBUG CONGÉLATEUR ===
+accessToken présent: ${!!accessToken}
+driveFolderId: ${driveFolderId}
+freezerItems count: ${freezerItems.length}
+freezerItems content: ${JSON.stringify(freezerItems)}`;
+
   renderFreezer();
 }
 
