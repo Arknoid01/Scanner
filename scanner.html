@@ -660,7 +660,7 @@
 // ═══════════════════════════════════════
 // CONFIG — à remplir
 // ═══════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
@@ -1000,6 +1000,11 @@ async function onCodeDetected(code) {
 // Cherche une correspondance dans la chambre froide, SANS déduire
 async function checkCfMatch(code) {
   const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  console.log('=== DEBUG CF MATCH ===');
+  console.log('Code scanné:', JSON.stringify(code));
+  console.log('Stock chargé:', stock.length, 'articles');
+  console.log('Mapping:', mapping);
+  console.log('Codes physiques en stock:', stock.map(s => s.codePhysique));
   if (!stock.length) return null;
   const codeFacture = mapping[code] || code;
   const item = stock.find(s =>
@@ -1007,6 +1012,7 @@ async function checkCfMatch(code) {
     s.codeFacture === code ||
     s.codeFacture === codeFacture
   );
+  console.log('Match trouvé:', item);
   return item || null;
 }
 
