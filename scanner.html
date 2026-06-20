@@ -724,7 +724,7 @@
     </label>
     <div id="meat-mode-dlc-display" class="meat-mode-dlc" style="display:none;"></div>
     <div id="meat-rafale-zone" style="display:none;">
-      <input type="text" id="meat-rafale-input" class="name-input" placeholder="📡 Scanner Bluetooth prêt — scanne une poche…" autocomplete="off">
+      <input type="text" id="meat-rafale-input" class="name-input" placeholder="📡 Scanner Bluetooth prêt — scanne une poche…" autocomplete="off" inputmode="none">
       <div style="font-size:12px;color:var(--text-dim);margin-top:6px;">Le champ reste actif — scanne en chaîne, sans rien toucher entre chaque poche.</div>
     </div>
   </div>
@@ -738,7 +738,7 @@
   </div>
 
   <div class="bluetooth-scan-zone">
-    <input type="text" id="bluetooth-scan-input" class="name-input" placeholder="📡 Scanner Bluetooth — scanne ici, ou utilise la caméra ci-dessous" autocomplete="off">
+    <input type="text" id="bluetooth-scan-input" class="name-input" placeholder="📡 Scanner Bluetooth — scanne ici, ou utilise la caméra ci-dessous" autocomplete="off" inputmode="none">
   </div>
 
   <div class="separator" style="margin: 4px 0;"><span style="flex:1;height:1px;background:var(--border);"></span><span style="padding:0 8px;font-size:12px;color:var(--text-dim);">ou</span><span style="flex:1;height:1px;background:var(--border);"></span></div>
@@ -2139,7 +2139,13 @@ function switchTab(tab) {
   if (tab === 'history') loadHistory();
   if (tab === 'labels') loadLabels();
   if (tab === 'freezer') loadFreezer();
-  if (tab === 'scan') { stopScan(); stopFreezerScan(); }
+  if (tab === 'scan') {
+    stopScan();
+    stopFreezerScan();
+    if (!meatModeActive) {
+      setTimeout(() => document.getElementById('bluetooth-scan-input')?.focus(), 100);
+    }
+  }
   if (tab !== 'freezer') stopFreezerScan();
 }
 
@@ -2296,6 +2302,28 @@ window.addEventListener('load', () => {
       btInput.value = '';
       if (code) onCodeDetected(code);
     }
+  });
+
+  // Focus automatique au chargement, sur l'onglet Scanner
+  if (document.getElementById('page-scan')?.classList.contains('active')) {
+    btInput.focus();
+  }
+
+  // Récupère le focus s'il se perd, pour ne jamais avoir à toucher l'écran entre deux scans.
+  // On évite de voler le focus si l'utilisateur est en train de remplir un AUTRE champ
+  // (nom de produit, recherche, renommage, sélection de liaison, etc.) — on vérifie le type
+  // d'élément actif plutôt qu'une liste figée d'IDs, pour ne jamais bloquer une saisie future.
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      const onScanTab = document.getElementById('page-scan')?.classList.contains('active');
+      const isOtherInput = active && active !== document.body &&
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) &&
+        active.id !== 'bluetooth-scan-input';
+      if (onScanTab && !meatModeActive && !isOtherInput) {
+        btInput.focus();
+      }
+    }, 150);
   });
 });
 </script>
