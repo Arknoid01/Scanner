@@ -414,6 +414,15 @@
   }
   #meat-rafale-zone .name-input:focus { box-shadow: 0 0 0 3px rgba(230,57,70,.2); }
 
+  .bluetooth-scan-zone .name-input {
+    font-size: 15px;
+    text-align: center;
+  }
+  .separator {
+    display: flex;
+    align-items: center;
+  }
+
   /* ─── CONGÉLATEUR ─── */
   #btn-freezer-scan {
     width: 100%;
@@ -682,7 +691,7 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:100%;width:100%;max-height:85vh;overflow-y:auto;">
     <h3 style="margin-bottom:10px;">📥 Importer un fichier JSON</h3>
     <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">
-      Colle le contenu JSON et choisis sa destination. Ça sera sauvegardé sur Drive via l'app (corrige le bug de fichier invisible).
+      Colle le JSON à ajouter — il sera <strong>fusionné</strong> avec les données existantes sur Drive, rien n'est écrasé.
     </p>
     <select id="import-json-target" class="name-input" style="margin-bottom:10px;">
       <option value="produits.json">produits.json (dictionnaire codes)</option>
@@ -727,6 +736,12 @@
     </label>
     <div style="font-size:12px;color:var(--text-dim);">Chaque scan te demande sa DLC, puis range le produit dans la chambre froide.</div>
   </div>
+
+  <div class="bluetooth-scan-zone">
+    <input type="text" id="bluetooth-scan-input" class="name-input" placeholder="📡 Scanner Bluetooth — scanne ici, ou utilise la caméra ci-dessous" autocomplete="off">
+  </div>
+
+  <div class="separator" style="margin: 4px 0;"><span style="flex:1;height:1px;background:var(--border);"></span><span style="padding:0 8px;font-size:12px;color:var(--text-dim);">ou</span><span style="flex:1;height:1px;background:var(--border);"></span></div>
 
   <div id="reader"></div>
 
@@ -1444,6 +1459,8 @@ async function onCodeDetected(code) {
       <div id="scan-edit-area"></div>
       <div id="cf-badge">${cfResult ? `<div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">🧊 Sorti de la chambre froide : <strong>${nom}</strong></div>` : ''}</div>
     `;
+    // Prêt pour le scan suivant via Bluetooth, sans rien toucher
+    document.getElementById('bluetooth-scan-input')?.focus();
   } else {
     card.className = 'result-card visible unknown';
     area.innerHTML = `
@@ -2160,17 +2177,52 @@ async function confirmImportJson() {
   }
 
   try {
-    // Invalide le cache d'ID pour ce fichier, pour forcer une nouvelle recherche/création propre
+    let merged;
+    let addedCount = 0;
+
+    if (target === 'produits.json') {
+      // Objet clé→valeur : fusion simple, le JSON collé a la priorité sur les codes existants
+      const current = (await driveLoadNamedJson('produits.json')) || {};
+      addedCount = Object.keys(parsed).filter(k => !(k in current)).length;
+      merged = { ...current, ...parsed };
+      produitsDict = merged;
+
+    } else if (target === 'cf-mapping.json') {
+      const current = (await driveLoadNamedJson('cf-mapping.json')) || {};
+      addedCount = Object.keys(parsed).filter(k => !(k in current)).length;
+      merged = { ...current, ...parsed };
+
+    } else if (target === 'congelateur.json') {
+      // Tableau : dédoublonne par (nom, date)
+      const current = (await driveLoadNamedJson('congelateur.json')) || [];
+      const seen = new Set(current.map(i => `${i.nom}::${i.date}`));
+      merged = [...current];
+      for (const item of parsed) {
+        const key = `${item.nom}::${item.date}`;
+        if (!seen.has(key)) { merged.push(item); seen.add(key); addedCount++; }
+      }
+      freezerItems = merged;
+
+    } else if (target === 'chambre-froide.json') {
+      // Tableau de lots : fusionne par (codeFacture, dlc) — même logique que confirmImport
+      const current = (await driveLoadNamedJson('chambre-froide.json')) || [];
+      merged = [...current];
+      for (const item of parsed) {
+        const existing = merged.find(s => s.codeFacture === item.codeFacture && s.dlc === item.dlc);
+        if (existing) {
+          existing.qty += item.qty || 1;
+        } else {
+          merged.push(item);
+          addedCount++;
+        }
+      }
+      cfStock = merged;
+    }
+
     delete driveFileIdCache[target];
+    await driveSaveNamedJson(target, merged);
 
-    await driveSaveNamedJson(target, parsed);
-
-    // Recharge les caches mémoire concernés
-    if (target === 'produits.json') produitsDict = parsed;
-    if (target === 'congelateur.json') freezerItems = parsed;
-    if (target === 'chambre-froide.json') cfStock = parsed;
-
-    showToast(`${target} importé ✓`, 'success');
+    showToast(`${target} fusionné — ${addedCount} ajout${addedCount > 1 ? 's' : ''} ✓`, 'success');
     closeImportModal();
 
     // Rafraîchit la vue courante si concernée
@@ -2231,6 +2283,18 @@ window.addEventListener('load', () => {
   document.addEventListener('click', () => {
     if (meatModeActive && !document.getElementById('meat-name-input')) {
       setTimeout(() => { if (meatModeActive) focusRafaleInput(); }, 50);
+    }
+  });
+
+  // ── Champ Bluetooth permanent du scanner classique ──
+  // Reçoit les scans du scanner Bluetooth exactement comme la caméra : même traitement,
+  // donc toutes les fonctions (liaison chambre froide, mode viande, mode DLC...) marchent pareil.
+  const btInput = document.getElementById('bluetooth-scan-input');
+  btInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const code = btInput.value.trim();
+      btInput.value = '';
+      if (code) onCodeDetected(code);
     }
   });
 });
