@@ -1244,6 +1244,14 @@ async function handleMeatScan(code) {
   // Cherche un lot existant avec ce code physique ET cette DLC (même bête, même morceau)
   let item = stock.find(s => s.codePhysique === code && s.dlc === meatModeDlc);
 
+  window._lastCfDebug = `=== DEBUG MODE VIANDE ===
+Code scanné: "${code}"
+meatModeDlc: "${meatModeDlc}"
+cfStock est null/vide: ${!cfStock}
+stock.length: ${stock.length}
+Codes physiques + DLC en stock: ${JSON.stringify(stock.map(s => ({code: s.codePhysique, dlc: s.dlc, nom: s.nom})))}
+Match trouvé: ${item ? JSON.stringify(item) : 'AUCUN'}`;
+
   if (item) {
     item.qty++;
     await saveCfStock();
