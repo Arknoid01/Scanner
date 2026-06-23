@@ -1244,14 +1244,6 @@ async function handleMeatScan(code) {
   // Cherche un lot existant avec ce code physique ET cette DLC (même bête, même morceau)
   let item = stock.find(s => s.codePhysique === code && s.dlc === meatModeDlc);
 
-  window._lastCfDebug = `=== DEBUG MODE VIANDE ===
-Code scanné: "${code}"
-meatModeDlc: "${meatModeDlc}"
-cfStock est null/vide: ${!cfStock}
-stock.length: ${stock.length}
-Codes physiques + DLC en stock: ${JSON.stringify(stock.map(s => ({code: s.codePhysique, dlc: s.dlc, nom: s.nom})))}
-Match trouvé: ${item ? JSON.stringify(item) : 'AUCUN'}`;
-
   if (item) {
     item.qty++;
     await saveCfStock();
@@ -1263,8 +1255,12 @@ Match trouvé: ${item ? JSON.stringify(item) : 'AUCUN'}`;
       </div>`;
     if (navigator.vibrate) navigator.vibrate(80);
     if (meatModeActive) focusRafaleInput(); // prêt pour la poche suivante, sans rien toucher
+  } else if (produitsDict[code]) {
+    // Le code est déjà connu (créé via étiquette ou scan classique) mais pas encore en stock chambre froide.
+    // On réutilise directement ce nom sans redemander.
+    await createMeatItem(code, produitsDict[code]);
   } else {
-    // Produit inconnu pour ce code : demande le nom une fois
+    // Vraiment inconnu partout : demande le nom une fois
     card.className = 'result-card visible unknown';
     area.innerHTML = `
       <div class="result-name unknown-label">Nouveau morceau — donne-lui un nom :</div>
@@ -1273,6 +1269,36 @@ Match trouvé: ${item ? JSON.stringify(item) : 'AUCUN'}`;
     `;
     setTimeout(() => document.getElementById('meat-name-input')?.focus(), 100);
   }
+}
+
+// Crée l'article dans la chambre froide pour un code/nom déjà connus (sans redemander le nom)
+async function createMeatItem(code, nom) {
+  const stock = await loadCfStock();
+  const newItem = {
+    id: 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+    nom,
+    dlc: meatModeDlc,
+    qty: 1,
+    supplier: 'TRADIVAL',
+    codeFacture: code,
+    codePhysique: code,
+    dateEntree: new Date().toISOString().slice(0, 10)
+  };
+  cfStock = stock;
+  cfStock.push(newItem);
+  await saveCfStock();
+
+  const card = document.getElementById('result-card');
+  const area = document.getElementById('result-known-area');
+  card.className = 'result-card visible known';
+  area.innerHTML = `
+    <div class="result-name">${nom}</div>
+    <div style="margin-top:8px;padding:8px 12px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);border-radius:8px;font-size:13px;color:var(--green);">
+      ✓ Ajouté à la chambre froide — DLC ${formatDlcDisplay(meatModeDlc)}
+    </div>`;
+  showToast(`${nom} ajouté ✓`, 'success');
+  if (navigator.vibrate) navigator.vibrate(80);
+  if (meatModeActive) focusRafaleInput();
 }
 
 async function confirmMeatName(code) {
