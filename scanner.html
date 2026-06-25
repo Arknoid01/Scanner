@@ -737,6 +737,14 @@
     <div style="font-size:12px;color:var(--text-dim);">Chaque scan te demande sa DLC, puis range le produit dans la chambre froide.</div>
   </div>
 
+  <div class="meat-mode-bar" id="partial-mode-bar">
+    <label class="meat-mode-toggle">
+      <input type="checkbox" id="partial-mode-checkbox" onchange="togglePartialMode(this.checked)">
+      <span>🍽️ Ouverture partielle</span>
+    </label>
+    <div style="font-size:12px;color:var(--text-dim);">Note l'ouverture dans l'historique sans retirer le produit de la chambre froide — pour quand il en reste après usage.</div>
+  </div>
+
   <div class="bluetooth-scan-zone">
     <input type="text" id="bluetooth-scan-input" class="name-input" placeholder="📡 Scanner Bluetooth — scanne ici, ou utilise la caméra ci-dessous" autocomplete="off" inputmode="none">
   </div>
@@ -839,6 +847,7 @@ let freezerCodeReader = null;
 let meatModeActive = false;
 let meatModeDlc = null; // DLC en cours pour le mode viande
 let dlcModeActive = false; // mode DLC manuelle par scan (charcuterie sans DLC sur facture)
+let partialModeActive = false; // note l'ouverture sans retirer du stock chambre froide
 
 // ── Cache pour accélérer les uploads ──
 const cache = {
@@ -1162,6 +1171,10 @@ function toggleMeatMode(checked) {
       document.getElementById('dlc-mode-checkbox').checked = false;
       dlcModeActive = false;
     }
+    if (partialModeActive) {
+      document.getElementById('partial-mode-checkbox').checked = false;
+      partialModeActive = false;
+    }
     const dlc = prompt('DLC pour cette bête (format JJ/MM/AAAA) :');
     if (!dlc) {
       document.getElementById('meat-mode-checkbox').checked = false;
@@ -1346,11 +1359,31 @@ async function confirmMeatName(code) {
 function toggleDlcMode(checked) {
   dlcModeActive = checked;
   if (checked) {
-    // Mode viande et mode DLC manuelle sont mutuellement exclusifs
+    // Tous les modes de scan spécifiques sont mutuellement exclusifs
     if (meatModeActive) {
       document.getElementById('meat-mode-checkbox').checked = false;
       toggleMeatMode(false);
     }
+    if (partialModeActive) {
+      document.getElementById('partial-mode-checkbox').checked = false;
+      partialModeActive = false;
+    }
+  }
+}
+
+function togglePartialMode(checked) {
+  partialModeActive = checked;
+  if (checked) {
+    // Tous les modes de scan spécifiques sont mutuellement exclusifs
+    if (meatModeActive) {
+      document.getElementById('meat-mode-checkbox').checked = false;
+      toggleMeatMode(false);
+    }
+    if (dlcModeActive) {
+      document.getElementById('dlc-mode-checkbox').checked = false;
+      dlcModeActive = false;
+    }
+    showToast('Mode ouverture partielle activé', 'success');
   }
 }
 
@@ -1470,10 +1503,13 @@ async function onCodeDetected(code) {
     cfResult = await checkCfMatch(code);
   }
 
-  // Si trouvé dans la chambre froide, on utilise ce nom et on déduit direct
+  // Si trouvé dans la chambre froide, on utilise ce nom.
+  // En mode "ouverture partielle", on note l'ouverture sans retirer du stock.
   if (cfResult) {
     nom = cfResult.nom;
-    await deductFromCf(cfResult);
+    if (!partialModeActive) {
+      await deductFromCf(cfResult);
+    }
     // Ajoute aussi dans produits.json pour la prochaine fois si pas déjà fait
     if (!produitsDict[code]) {
       produitsDict[code] = nom;
@@ -1485,13 +1521,18 @@ async function onCodeDetected(code) {
 
   if (nom) {
     card.className = 'result-card visible known';
+    const cfBadgeHtml = cfResult
+      ? partialModeActive
+        ? `<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.4);border-radius:8px;font-size:13px;color:var(--yellow);">🍽️ Ouverture notée — reste en chambre froide : <strong>${nom}</strong></div>`
+        : `<div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">🧊 Sorti de la chambre froide : <strong>${nom}</strong></div>`
+      : '';
     area.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
         <div class="result-name" id="scan-result-name">${nom}</div>
         <button class="btn-edit" onclick="editScanName()">✏️ Modifier</button>
       </div>
       <div id="scan-edit-area"></div>
-      <div id="cf-badge">${cfResult ? `<div style="margin-top:8px;padding:8px 12px;background:rgba(37,99,235,.15);border:1px solid rgba(37,99,235,.4);border-radius:8px;font-size:13px;color:#7dd3fc;">🧊 Sorti de la chambre froide : <strong>${nom}</strong></div>` : ''}</div>
+      <div id="cf-badge">${cfBadgeHtml}</div>
     `;
     // Prêt pour le scan suivant via Bluetooth, sans rien toucher
     document.getElementById('bluetooth-scan-input')?.focus();
@@ -2272,6 +2313,7 @@ async function confirmImportJson() {
     }
   } catch (e) {
     showToast("Erreur d'import", 'error');
+    window._lastCfDebug = `=== ERREUR IMPORT ===\nMessage: ${e.message}\nStack: ${e.stack}`;
     console.error(e);
   }
 }
