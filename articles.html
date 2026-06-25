@@ -385,6 +385,72 @@
     white-space: nowrap;
   }
 
+  .btn-merge-add {
+    background: rgba(167,139,250,.12);
+    color: var(--purple);
+    border: 1px solid rgba(167,139,250,.4);
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    white-space: nowrap;
+  }
+
+  .merge-preview-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .merge-preview-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .merge-preview-row:last-child { border-bottom: none; }
+  .merge-preview-label {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    flex-shrink: 0;
+    width: 90px;
+  }
+  .merge-preview-values {
+    flex: 1;
+    text-align: right;
+  }
+  .merge-preview-old {
+    color: var(--text-dim);
+    text-decoration: line-through;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .merge-preview-new {
+    color: var(--green);
+    font-weight: 700;
+  }
+  .merge-preview-same {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .merge-warning {
+    background: rgba(245,158,11,.1);
+    border: 1px solid rgba(245,158,11,.3);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--yellow);
+    margin-bottom: 14px;
+  }
+
   .toast {
     position: fixed;
     bottom: 24px; left: 50%;
@@ -481,11 +547,28 @@
           <option value="">— Choisir un article à lier —</option>
         </select>
         <button class="btn-link-add" onclick="addLink()">Lier</button>
+        <button class="btn-merge-add" onclick="openMergeConfirm()">🔀 Fusionner</button>
       </div>
     </div>
 
     <div class="section-divider">
       <button class="btn-modal-danger" style="width:100%;" onclick="deleteArticle()">🗑️ Supprimer cet article</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ POPUP CONFIRMATION FUSION ═══ -->
+<div class="modal-overlay" id="merge-confirm-modal">
+  <div class="modal-sheet" style="max-width:480px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🔀 Confirmer la fusion</div>
+    <div class="modal-subtitle">Ces deux articles vont devenir une seule entrée. Action irréversible.</div>
+
+    <div id="merge-preview"></div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-primary" style="background:var(--purple);" onclick="confirmMerge()">✓ Fusionner</button>
+      <button class="btn-modal-secondary" onclick="closeMergeConfirm()">Annuler</button>
     </div>
   </div>
 </div>
@@ -496,7 +579,7 @@
 // ════════════════════════════════════════
 // CONFIG
 // ════════════════════════════════════════
-const CLIENT_ID = '995775640527-b12ev3k67kvi450j97usaqjsirmbj5hg.apps.googleusercontent.com';
+const CLIENT_ID = 'VOTRE_CLIENT_ID.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 
@@ -1014,6 +1097,124 @@ async function unlinkArticle(targetId) {
     renderList();
   } catch (e) {
     showToast('Erreur', 'error');
+  }
+}
+
+// ════════════════════════════════════════
+// FUSION D'ARTICLES
+// ════════════════════════════════════════
+let mergeTarget = null; // l'article choisi dans le select, à fusionner avec editingArticle
+
+function openMergeConfirm() {
+  if (!editingArticle) return;
+  const select = document.getElementById('link-target-select');
+  const targetId = select.value;
+  if (!targetId) { showToast('Choisis un article à fusionner', 'error'); return; }
+
+  const all = buildUnifiedList();
+  const target = all.find(a => a.id === targetId);
+  if (!target) return;
+  mergeTarget = target;
+
+  // Règle de priorité : on garde le code physique le plus "réel" (un vrai EAN/code scanné,
+  // pas un code facture interne), et le nom le plus complet entre les deux.
+  const keepNom = editingArticle.nom.length >= target.nom.length ? editingArticle.nom : target.nom;
+  const otherNom = keepNom === editingArticle.nom ? target.nom : editingArticle.nom;
+
+  const finalCodeFacture = editingArticle.codeFacture || target.codeFacture;
+  const finalCodePhysique = editingArticle.codePhysique || target.codePhysique;
+
+  const el = document.getElementById('merge-preview');
+  el.innerHTML = `
+    <div class="merge-warning">⚠️ "${target.nom}" sera supprimé et fusionné dans cet article. Les deux ne pourront plus être séparés.</div>
+    <div class="merge-preview-card">
+      <div class="merge-preview-row">
+        <div class="merge-preview-label">Nom</div>
+        <div class="merge-preview-values">
+          ${keepNom !== otherNom ? `<span class="merge-preview-old">${otherNom}</span>` : ''}
+          <span class="merge-preview-new">${keepNom}</span>
+        </div>
+      </div>
+      <div class="merge-preview-row">
+        <div class="merge-preview-label">Code facture</div>
+        <div class="merge-preview-values">
+          <span class="${finalCodeFacture ? 'merge-preview-same' : 'merge-preview-old'}">${finalCodeFacture || '— aucun —'}</span>
+        </div>
+      </div>
+      <div class="merge-preview-row">
+        <div class="merge-preview-label">Code physique</div>
+        <div class="merge-preview-values">
+          <span class="${finalCodePhysique ? 'merge-preview-same' : 'merge-preview-old'}">${finalCodePhysique || '— aucun —'}</span>
+        </div>
+      </div>
+      <div class="merge-preview-row">
+        <div class="merge-preview-label">Sources</div>
+        <div class="merge-preview-values merge-preview-same">${editingArticle.source} + ${target.source}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('merge-confirm-modal').classList.add('visible');
+}
+
+function closeMergeConfirm() {
+  document.getElementById('merge-confirm-modal').classList.remove('visible');
+  mergeTarget = null;
+}
+
+async function confirmMerge() {
+  if (!editingArticle || !mergeTarget) return;
+  const a = editingArticle;
+  const b = mergeTarget;
+
+  const keepNom = a.nom.length >= b.nom.length ? a.nom : b.nom;
+  const finalCodeFacture = a.codeFacture || b.codeFacture;
+  const finalCodePhysique = a.codePhysique || b.codePhysique;
+
+  try {
+    // 1. Met à jour produits.json : un seul code physique pointe vers le nom retenu,
+    //    on retire l'éventuel doublon de code physique de l'autre article.
+    if (finalCodePhysique) {
+      produitsDict[finalCodePhysique] = keepNom;
+    }
+    // Si l'article qu'on absorbe avait un AUTRE code physique différent, on le retire de produits.json
+    // pour éviter qu'il reste une entrée orpheline avec l'ancien nom.
+    [a.codePhysique, b.codePhysique].filter(c => c && c !== finalCodePhysique).forEach(c => {
+      delete produitsDict[c];
+    });
+    await driveSaveNamedJson('produits.json', produitsDict);
+
+    // 2. Fusionne dans chambre-froide.json : tous les lots des deux codeFacture deviennent
+    //    un seul article avec le nom et le code physique retenus.
+    const oldCodesFacture = [a.codeFacture, b.codeFacture].filter(Boolean);
+    let stockChanged = false;
+    cfStock.forEach(item => {
+      if (oldCodesFacture.includes(item.codeFacture)) {
+        item.nom = keepNom;
+        item.codeFacture = finalCodeFacture;
+        item.codePhysique = finalCodePhysique;
+        stockChanged = true;
+      }
+    });
+    if (stockChanged) await driveSaveNamedJson('chambre-froide.json', cfStock);
+
+    // 3. Nettoie le mapping : retire les anciens liens devenus inutiles, le code physique final
+    //    et le code facture final restent associés l'un à l'autre.
+    [a.codeFacture, a.codePhysique, b.codeFacture, b.codePhysique].filter(Boolean).forEach(c => {
+      delete cfMapping[c];
+    });
+    if (finalCodePhysique && finalCodeFacture && finalCodePhysique !== finalCodeFacture) {
+      cfMapping[finalCodePhysique] = finalCodeFacture;
+      cfMapping[finalCodeFacture] = finalCodePhysique;
+    }
+    await driveSaveNamedJson('cf-mapping.json', cfMapping);
+
+    showToast('Articles fusionnés ✓', 'success');
+    closeMergeConfirm();
+    closeEditModal();
+    renderList();
+  } catch (e) {
+    showToast('Erreur de fusion', 'error');
+    console.error(e);
   }
 }
 
