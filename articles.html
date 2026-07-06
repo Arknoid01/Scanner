@@ -370,8 +370,61 @@
   .link-search-row {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
   }
-  .link-search-row select { flex: 1; }
+  .link-autocomplete {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+  .link-autocomplete input { width: 100%; }
+  .link-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 200;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .link-dropdown.open { display: block; }
+  .link-dropdown-item {
+    padding: 9px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  .link-dropdown-item:last-child { border-bottom: none; }
+  .link-dropdown-item:hover, .link-dropdown-item.selected {
+    background: rgba(167,139,250,.15);
+  }
+  .link-dropdown-item .item-code {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .link-selected-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(167,139,250,.15);
+    border: 1px solid rgba(167,139,250,.4);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 12px;
+    color: var(--purple);
+    margin-top: 4px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .btn-link-add {
     background: var(--blue-dim);
     color: var(--ice);
@@ -543,9 +596,15 @@
       <div class="linked-list" id="linked-list"></div>
 
       <div class="link-search-row">
-        <select class="field-input" id="link-target-select">
-          <option value="">— Choisir un article à lier —</option>
-        </select>
+        <div class="link-autocomplete" id="link-autocomplete">
+          <input type="text" class="field-input" id="link-search-input"
+                 placeholder="🔍 Chercher un article à lier…"
+                 autocomplete="off"
+                 oninput="filterLinkSearch(this.value)"
+                 onfocus="showLinkDropdown()"
+                 onblur="hideLinkDropdown()">
+          <div class="link-dropdown" id="link-dropdown"></div>
+        </div>
         <button class="btn-link-add" onclick="addLink()">Lier</button>
         <button class="btn-merge-add" onclick="openMergeConfirm()">🔀 Fusionner</button>
       </div>
@@ -589,6 +648,9 @@ const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 let accessToken = null;
 let driveFolderId = null;
 let tokenClient = null;
+let refreshTimer = null;
+let silentAttempt = false;
+let tokenResolvers = [];
 let produitsDict = {};   // { code: nom } — depuis produits.json (scan manuel + étiquettes)
 let cfStock = [];         // depuis chambre-froide.json (articles facture)
 let cfMapping = {};       // depuis cf-mapping.json (liens code physique <-> code facture)
@@ -596,6 +658,8 @@ let currentFilter = 'all';
 let editingArticle = null; // { kind: 'produit'|'facture', code, nom, ... }
 const fileIdCache = {};
 const fileLocks = {};
+let linkAvailable = [];   // articles disponibles pour la liaison
+let linkTargetId = null;  // id de l'article sélectionné dans l'autocomplete
 
 // ════════════════════════════════════════
 // AUTH
@@ -606,13 +670,27 @@ function initGoogleAuth() {
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (r) => {
-      if (r.error) { showToast('Erreur auth', 'error'); return; }
+      if (r.error) {
+        if (!silentAttempt) showToast('Erreur auth', 'error');
+        silentAttempt = false;
+        tokenResolvers.forEach(res => res());
+        tokenResolvers = [];
+        return;
+      }
+      const firstConnect = !accessToken;
       accessToken = r.access_token;
-      const expiry = Date.now() + (r.expires_in || 3600) * 1000;
+      const expiresIn = r.expires_in || 3600;
+      const expiry = Date.now() + expiresIn * 1000;
       localStorage.setItem('cf_token', accessToken);
-      localStorage.setItem('cf_expiry', expiry);
+      localStorage.setItem('cf_expiry', String(expiry));
+      localStorage.setItem('cf_had_session', '1');
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, (expiresIn - 300) * 1000));
+      silentAttempt = false;
+      tokenResolvers.forEach(res => res());
+      tokenResolvers = [];
       setConnectedUI();
-      await initDrive();
+      if (firstConnect) await initDrive();
     }
   });
 }
@@ -625,11 +703,36 @@ function setConnectedUI() {
 
 function handleAuth() {
   if (accessToken) return;
+  silentAttempt = false;
   tokenClient.requestAccessToken();
 }
 
+function doSilentRefresh() {
+  if (!tokenClient) return;
+  silentAttempt = true;
+  tokenClient.requestAccessToken({ prompt: '' });
+}
+
+function waitForFreshToken() {
+  return new Promise(resolve => {
+    tokenResolvers.push(resolve);
+    doSilentRefresh();
+    setTimeout(() => {
+      const i = tokenResolvers.indexOf(resolve);
+      if (i !== -1) tokenResolvers.splice(i, 1);
+      resolve();
+    }, 8000);
+  });
+}
+
 async function initDrive() {
-  driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  const cachedFolder = lsFolderId();
+  if (cachedFolder) {
+    driveFolderId = cachedFolder;
+    folderIdCache[`root::${DRIVE_FOLDER_NAME}`] = cachedFolder;
+  } else {
+    driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  }
   const [p, c, m] = await Promise.all([
     driveLoadNamedJson('produits.json'),
     driveLoadNamedJson('chambre-froide.json'),
@@ -646,22 +749,44 @@ async function initDrive() {
 // DRIVE HELPERS (avec verrou anti-doublon)
 // ════════════════════════════════════════
 async function driveGet(url) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (r.status === 401) {
+    await waitForFreshToken();
+    r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  }
   return r.json();
 }
 
 const folderIdCache = {};
 const folderLocks = {};
 
+// ── Cache localStorage (même préfixe que scanner.html pour partager les IDs) ──
+const LS = 'sb_';
+const _bgRefreshed = {};
+function lsData(f)          { try { const s = localStorage.getItem(LS+'d_'+f); return s ? JSON.parse(s) : null; } catch { return null; } }
+function lsSetData(f, d)    { try { localStorage.setItem(LS+'d_'+f, JSON.stringify(d)); } catch {} }
+function lsFileId(f)        { return localStorage.getItem(LS+'fid_'+f) || null; }
+function lsSetFileId(f, id) { try { localStorage.setItem(LS+'fid_'+f, id); } catch {} }
+function lsFolderId()       { return localStorage.getItem(LS+'folder') || null; }
+function lsSetFolderId(id)  { try { localStorage.setItem(LS+'folder', id); } catch {} }
+
 async function getOrCreateFolder(name, parentId) {
   const cacheKey = `${parentId || 'root'}::${name}`;
   if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+  if (!parentId) {
+    const lsCached = lsFolderId();
+    if (lsCached) { folderIdCache[cacheKey] = lsCached; return lsCached; }
+  }
   const run = async () => {
     if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
     let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
     if (parentId) q += ` and '${parentId}' in parents`;
     const d = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
-    if (d.files?.length) { folderIdCache[cacheKey] = d.files[0].id; return d.files[0].id; }
+    if (d.files?.length) {
+      folderIdCache[cacheKey] = d.files[0].id;
+      if (!parentId) lsSetFolderId(d.files[0].id);
+      return d.files[0].id;
+    }
     const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
     if (parentId) meta.parents = [parentId];
     const r = await fetch('https://www.googleapis.com/drive/v3/files', {
@@ -671,6 +796,7 @@ async function getOrCreateFolder(name, parentId) {
     });
     const id = (await r.json()).id;
     folderIdCache[cacheKey] = id;
+    if (!parentId) lsSetFolderId(id);
     return id;
   };
   const previous = folderLocks[cacheKey] || Promise.resolve();
@@ -681,23 +807,53 @@ async function getOrCreateFolder(name, parentId) {
 
 async function driveFindFileId(filename) {
   if (fileIdCache[filename]) return fileIdCache[filename];
+  const lsCached = lsFileId(filename);
+  if (lsCached) { fileIdCache[filename] = lsCached; return lsCached; }
   const data = await driveGet(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
   );
-  if (data.files?.length) { fileIdCache[filename] = data.files[0].id; return data.files[0].id; }
+  if (data.files?.length) {
+    fileIdCache[filename] = data.files[0].id;
+    lsSetFileId(filename, data.files[0].id);
+    return data.files[0].id;
+  }
   return null;
 }
 
 async function driveLoadNamedJson(filename) {
+  const cached = lsData(filename);
+  if (cached !== null) {
+    if (!_bgRefreshed[filename] && driveFolderId) {
+      _bgRefreshed[filename] = true;
+      (async () => {
+        try {
+          const fid = await driveFindFileId(filename);
+          if (!fid) return;
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (r.ok) lsSetData(filename, await r.json());
+        } catch {}
+      })();
+    }
+    return cached;
+  }
   const fileId = await driveFindFileId(filename);
   if (!fileId) return null;
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+  let r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
-  return r.json();
+  if (r.status === 401) { await waitForFreshToken(); r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); }
+  const data = await r.json();
+  lsSetData(filename, data);
+  return data;
 }
 
-async function driveSaveNamedJson(filename, data) {
+const _writeTimers = {};
+const _writePending = {};
+
+async function _driveFlush(filename) {
+  const data = _writePending[filename];
+  if (data === undefined) return;
+  delete _writePending[filename];
   const run = async () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     let fileId = await driveFindFileId(filename);
@@ -715,13 +871,20 @@ async function driveSaveNamedJson(filename, data) {
         method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
       });
       const created = await r.json();
-      if (created.id) fileIdCache[filename] = created.id;
+      if (created.id) { fileIdCache[filename] = created.id; lsSetFileId(filename, created.id); }
     }
   };
   const previous = fileLocks[filename] || Promise.resolve();
   const current = previous.then(run, run);
   fileLocks[filename] = current;
   return current;
+}
+
+async function driveSaveNamedJson(filename, data) {
+  lsSetData(filename, data);
+  _writePending[filename] = data;
+  clearTimeout(_writeTimers[filename]);
+  _writeTimers[filename] = setTimeout(() => _driveFlush(filename), 1500);
 }
 
 // ════════════════════════════════════════
@@ -894,13 +1057,66 @@ function renderLinkedList(article) {
 }
 
 function renderLinkTargetSelect(article) {
-  const select = document.getElementById('link-target-select');
   const all = buildUnifiedList().filter(a => a.id !== article.id);
   const linkedIds = getLinkedArticles(article).map(l => l.id);
-  const available = all.filter(a => !linkedIds.includes(a.id));
+  linkAvailable = all.filter(a => !linkedIds.includes(a.id));
+  linkTargetId = null;
+  const input = document.getElementById('link-search-input');
+  if (input) input.value = '';
+  renderLinkDropdown('');
+}
 
-  select.innerHTML = '<option value="">— Choisir un article à lier —</option>' +
-    available.map(a => `<option value="${a.id}">${a.nom} (${a.codeFacture || a.codePhysique})</option>`).join('');
+function filterLinkSearch(q) {
+  linkTargetId = null;
+  renderLinkDropdown(q);
+  const dd = document.getElementById('link-dropdown');
+  if (dd) dd.classList.add('open');
+}
+
+function renderLinkDropdown(q) {
+  const dropdown = document.getElementById('link-dropdown');
+  if (!dropdown) return;
+  const filtered = q.trim()
+    ? linkAvailable.filter(a =>
+        a.nom.toLowerCase().includes(q.toLowerCase()) ||
+        (a.codeFacture || a.codePhysique || '').toLowerCase().includes(q.toLowerCase()))
+    : linkAvailable;
+  if (!filtered.length) {
+    dropdown.innerHTML = '<div style="padding:10px 12px;font-size:13px;color:var(--text-dim);">Aucun article trouvé</div>';
+    return;
+  }
+  dropdown.innerHTML = filtered.slice(0, 60).map(a => {
+    const code = a.codeFacture || a.codePhysique || '';
+    const safeName = a.nom.replace(/'/g, "\\'");
+    const safeCode = code.replace(/'/g, "\\'");
+    return `<div class="link-dropdown-item${a.id === linkTargetId ? ' selected' : ''}"
+              onmousedown="selectLinkTarget('${a.id}','${safeName}','${safeCode}')">
+              <div>${a.nom}</div>
+              <div class="item-code">${code}</div>
+            </div>`;
+  }).join('');
+}
+
+function selectLinkTarget(id, nom, code) {
+  linkTargetId = id;
+  const input = document.getElementById('link-search-input');
+  if (input) input.value = `${nom}${code ? ' (' + code + ')' : ''}`;
+  const dd = document.getElementById('link-dropdown');
+  if (dd) dd.classList.remove('open');
+}
+
+function showLinkDropdown() {
+  const q = document.getElementById('link-search-input')?.value || '';
+  renderLinkDropdown(q);
+  const dd = document.getElementById('link-dropdown');
+  if (dd) dd.classList.add('open');
+}
+
+function hideLinkDropdown() {
+  setTimeout(() => {
+    const dd = document.getElementById('link-dropdown');
+    if (dd) dd.classList.remove('open');
+  }, 160);
 }
 
 // Liste tous les dossiers de dates dans Scanner Boucherie
@@ -1050,9 +1266,8 @@ async function deleteArticle() {
 // ════════════════════════════════════════
 async function addLink() {
   if (!editingArticle) return;
-  const select = document.getElementById('link-target-select');
-  const targetId = select.value;
-  if (!targetId) { showToast('Choisis un article', 'error'); return; }
+  const targetId = linkTargetId;
+  if (!targetId) { showToast('Choisis un article dans la liste', 'error'); return; }
 
   const all = buildUnifiedList();
   const target = all.find(a => a.id === targetId);
@@ -1107,8 +1322,7 @@ let mergeTarget = null; // l'article choisi dans le select, à fusionner avec ed
 
 function openMergeConfirm() {
   if (!editingArticle) return;
-  const select = document.getElementById('link-target-select');
-  const targetId = select.value;
+  const targetId = linkTargetId;
   if (!targetId) { showToast('Choisis un article à fusionner', 'error'); return; }
 
   const all = buildUnifiedList();
@@ -1234,23 +1448,28 @@ function showToast(msg, type = '') {
 // INIT
 // ════════════════════════════════════════
 window.addEventListener('load', () => {
-  const savedToken = localStorage.getItem('cf_token');
+  const savedToken  = localStorage.getItem('cf_token');
   const savedExpiry = localStorage.getItem('cf_expiry');
-  if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
-    accessToken = savedToken;
-    setConnectedUI();
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = () => { initGoogleAuth(); initDrive(); };
-    document.head.appendChild(s);
-  } else {
-    localStorage.removeItem('cf_token');
-    localStorage.removeItem('cf_expiry');
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = initGoogleAuth;
-    document.head.appendChild(s);
-  }
+  const hadSession  = localStorage.getItem('cf_had_session');
+
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = async () => {
+    initGoogleAuth();
+    if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
+      accessToken = savedToken;
+      setConnectedUI();
+      const remaining = parseInt(savedExpiry) - Date.now();
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, remaining - 300000));
+      await initDrive();
+    } else if (hadSession) {
+      localStorage.removeItem('cf_token');
+      localStorage.removeItem('cf_expiry');
+      doSilentRefresh();
+    }
+  };
+  document.head.appendChild(s);
 });
 </script>
 </body>

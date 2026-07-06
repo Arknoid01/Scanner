@@ -699,6 +699,9 @@ const DRIVE_FOLDER_NAME = 'Scanner Boucherie';
 let accessToken = null;
 let driveFolderId = null;
 let tokenClient = null;
+let refreshTimer = null;
+let silentAttempt = false;
+let tokenResolvers = [];
 let stock = [];        // [{id, nom, dlc, qty, supplier, codeFacture, codePhysique, dateEntree}]
 let mapping = {};      // { codePhysique: codeFacture } et { codeFacture: codePhysique }
 let importItems = [];  // items en attente d'import
@@ -717,13 +720,27 @@ function initGoogleAuth() {
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (r) => {
-      if (r.error) { showToast('Erreur auth', 'error'); return; }
+      if (r.error) {
+        if (!silentAttempt) showToast('Erreur auth', 'error');
+        silentAttempt = false;
+        tokenResolvers.forEach(res => res());
+        tokenResolvers = [];
+        return;
+      }
+      const firstConnect = !accessToken;
       accessToken = r.access_token;
-      const expiry = Date.now() + (r.expires_in || 3600) * 1000;
+      const expiresIn = r.expires_in || 3600;
+      const expiry = Date.now() + expiresIn * 1000;
       localStorage.setItem('cf_token', accessToken);
-      localStorage.setItem('cf_expiry', expiry);
+      localStorage.setItem('cf_expiry', String(expiry));
+      localStorage.setItem('cf_had_session', '1');
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, (expiresIn - 300) * 1000));
+      silentAttempt = false;
+      tokenResolvers.forEach(res => res());
+      tokenResolvers = [];
       setConnectedUI();
-      await initDrive();
+      if (firstConnect) await initDrive();
     }
   });
 }
@@ -736,13 +753,40 @@ function setConnectedUI() {
 
 function handleAuth() {
   if (accessToken) return;
+  silentAttempt = false;
   tokenClient.requestAccessToken();
 }
 
+function doSilentRefresh() {
+  if (!tokenClient) return;
+  silentAttempt = true;
+  tokenClient.requestAccessToken({ prompt: '' });
+}
+
+function waitForFreshToken() {
+  return new Promise(resolve => {
+    tokenResolvers.push(resolve);
+    doSilentRefresh();
+    setTimeout(() => {
+      const i = tokenResolvers.indexOf(resolve);
+      if (i !== -1) tokenResolvers.splice(i, 1);
+      resolve();
+    }, 8000);
+  });
+}
+
 async function initDrive() {
-  driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
-  stock = await loadJson('chambre-froide.json') || [];
-  mapping = await loadJson('cf-mapping.json') || {};
+  const cachedFolder = lsFolderId();
+  if (cachedFolder) {
+    driveFolderId = cachedFolder;
+    folderIdCache[`root::${DRIVE_FOLDER_NAME}`] = cachedFolder;
+  } else {
+    driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  }
+  [stock, mapping] = await Promise.all([
+    loadJson('chambre-froide.json').then(d => d || []),
+    loadJson('cf-mapping.json').then(d => d || {})
+  ]);
   renderStock();
   showToast('Drive connecté ✓', 'success');
 }
@@ -751,17 +795,36 @@ async function initDrive() {
 // DRIVE HELPERS
 // ════════════════════════════════════════
 async function driveGet(url) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (r.status === 401) {
+    await waitForFreshToken();
+    r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  }
   return r.json();
 }
 
 const folderIdCache = {};
 const folderLocks = {};
+const fileIdCache = {};
+const fileLocks = {};
+
+// ── Cache localStorage (même préfixe que les autres fichiers de l'app) ──
+const LS = 'sb_';
+const _bgRefreshed = {};
+function lsData(f)          { try { const s = localStorage.getItem(LS+'d_'+f); return s ? JSON.parse(s) : null; } catch { return null; } }
+function lsSetData(f, d)    { try { localStorage.setItem(LS+'d_'+f, JSON.stringify(d)); } catch {} }
+function lsFileId(f)        { return localStorage.getItem(LS+'fid_'+f) || null; }
+function lsSetFileId(f, id) { try { localStorage.setItem(LS+'fid_'+f, id); } catch {} }
+function lsFolderId()       { return localStorage.getItem(LS+'folder') || null; }
+function lsSetFolderId(id)  { try { localStorage.setItem(LS+'folder', id); } catch {} }
 
 async function getOrCreateFolder(name, parentId) {
   const cacheKey = `${parentId || 'root'}::${name}`;
   if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
-
+  if (!parentId) {
+    const lsCached = lsFolderId();
+    if (lsCached) { folderIdCache[cacheKey] = lsCached; return lsCached; }
+  }
   const run = async () => {
     if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
     let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
@@ -769,6 +832,7 @@ async function getOrCreateFolder(name, parentId) {
     const d = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
     if (d.files?.length) {
       folderIdCache[cacheKey] = d.files[0].id;
+      if (!parentId) lsSetFolderId(d.files[0].id);
       return d.files[0].id;
     }
     const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
@@ -780,36 +844,64 @@ async function getOrCreateFolder(name, parentId) {
     });
     const id = (await r.json()).id;
     folderIdCache[cacheKey] = id;
+    if (!parentId) lsSetFolderId(id);
     return id;
   };
-
-  // Sérialise pour éviter de créer deux fois le même dossier en cas d'appels concurrents
   const previous = folderLocks[cacheKey] || Promise.resolve();
   const current = previous.then(run, run);
   folderLocks[cacheKey] = current;
   return current;
 }
 
-// Cache des IDs de fichiers Drive
-const fileIdCache = {};
-// Verrou anti-doublon : une écriture à la fois par nom de fichier
-const fileLocks = {};
-
 async function loadJson(filename) {
-  const d = await driveGet(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
-  );
-  if (!d.files?.length) return null;
-  fileIdCache[filename] = d.files[0].id;
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${d.files[0].id}?alt=media`, {
+  // Retourne depuis localStorage si disponible (instantané)
+  const cached = lsData(filename);
+  if (cached !== null) {
+    if (!_bgRefreshed[filename] && driveFolderId) {
+      _bgRefreshed[filename] = true;
+      (async () => {
+        try {
+          const lsFid = lsFileId(filename);
+          const fid = lsFid || fileIdCache[filename];
+          if (!fid) return;
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (r.ok) lsSetData(filename, await r.json());
+        } catch {}
+      })();
+    }
+    return cached;
+  }
+  // Cache vide — fetch Drive
+  const lsFid = lsFileId(filename);
+  if (lsFid) { fileIdCache[filename] = lsFid; }
+  if (!fileIdCache[filename]) {
+    const d = await driveGet(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`
+    );
+    if (!d.files?.length) return null;
+    fileIdCache[filename] = d.files[0].id;
+    lsSetFileId(filename, d.files[0].id);
+  }
+  let r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileIdCache[filename]}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
-  return r.json();
+  if (r.status === 401) { await waitForFreshToken(); r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileIdCache[filename]}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); }
+  const data = await r.json();
+  lsSetData(filename, data);
+  return data;
 }
 
-async function saveJson(filename, data) {
+const _writeTimers = {};
+const _writePending = {};
+
+async function _driveFlush(filename) {
+  const data = _writePending[filename];
+  if (data === undefined) return;
+  delete _writePending[filename];
   const run = async () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const lsFid = lsFileId(filename);
+    if (lsFid && !fileIdCache[filename]) fileIdCache[filename] = lsFid;
     if (fileIdCache[filename]) {
       await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileIdCache[filename]}?uploadType=media`, {
         method: 'PATCH',
@@ -822,6 +914,7 @@ async function saveJson(filename, data) {
       );
       if (d.files?.length) {
         fileIdCache[filename] = d.files[0].id;
+        lsSetFileId(filename, d.files[0].id);
         await fetch(`https://www.googleapis.com/upload/drive/v3/files/${d.files[0].id}?uploadType=media`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -834,16 +927,23 @@ async function saveJson(filename, data) {
         const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
           method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
         });
-        fileIdCache[filename] = (await r.json()).id;
+        const id = (await r.json()).id;
+        fileIdCache[filename] = id;
+        lsSetFileId(filename, id);
       }
     }
   };
-
-  // Sérialise les écritures concurrentes sur le même fichier pour éviter les doublons sur Drive
   const previous = fileLocks[filename] || Promise.resolve();
   const current = previous.then(run, run);
   fileLocks[filename] = current;
   return current;
+}
+
+async function saveJson(filename, data) {
+  lsSetData(filename, data);
+  _writePending[filename] = data;
+  clearTimeout(_writeTimers[filename]);
+  _writeTimers[filename] = setTimeout(() => _driveFlush(filename), 1500);
 }
 
 // ════════════════════════════════════════
@@ -1535,23 +1635,28 @@ function showToast(msg, type = '') {
 // INIT
 // ════════════════════════════════════════
 window.addEventListener('load', () => {
-  const savedToken = localStorage.getItem('cf_token');
+  const savedToken  = localStorage.getItem('cf_token');
   const savedExpiry = localStorage.getItem('cf_expiry');
-  if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
-    accessToken = savedToken;
-    setConnectedUI();
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = () => { initGoogleAuth(); initDrive(); };
-    document.head.appendChild(s);
-  } else {
-    localStorage.removeItem('cf_token');
-    localStorage.removeItem('cf_expiry');
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = initGoogleAuth;
-    document.head.appendChild(s);
-  }
+  const hadSession  = localStorage.getItem('cf_had_session');
+
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = async () => {
+    initGoogleAuth();
+    if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
+      accessToken = savedToken;
+      setConnectedUI();
+      const remaining = parseInt(savedExpiry) - Date.now();
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, remaining - 300000));
+      await initDrive();
+    } else if (hadSession) {
+      localStorage.removeItem('cf_token');
+      localStorage.removeItem('cf_expiry');
+      doSilentRefresh();
+    }
+  };
+  document.head.appendChild(s);
 });
 </script>
 </body>

@@ -423,6 +423,36 @@
     align-items: center;
   }
 
+  /* ─── PICKER CHAMBRE FROIDE ─── */
+  .btn-cf-pick {
+    background: rgba(245,158,11,.1);
+    color: #fbbf24;
+    border: 1px solid rgba(245,158,11,.35);
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    transition: background .15s;
+  }
+  .btn-cf-pick:hover { background: rgba(245,158,11,.2); }
+  .cf-picker-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background .1s;
+  }
+  .cf-picker-item:last-child { border-bottom: none; }
+  .cf-picker-item:hover { background: rgba(245,158,11,.08); }
+  .cf-picker-item-nom { font-size: 14px; font-weight: 600; }
+  .cf-picker-item-meta { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+
   /* ─── CONGÉLATEUR ─── */
   #btn-freezer-scan {
     width: 100%;
@@ -707,6 +737,24 @@
   </div>
 </div>
 
+<!-- Modal picker chambre froide (ouverture partielle sans code-barres) -->
+<div id="cf-picker-modal" onclick="closeCfPickerOverlay(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:flex-end;justify-content:center;padding:0;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-height:80vh;display:flex;flex-direction:column;">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:15px;font-weight:700;">🧊 Choisir dans la chambre froide</div>
+      <button onclick="closeCfPickerModal()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
+    </div>
+    <div style="padding:10px 16px;">
+      <input type="text" id="cf-picker-search" class="name-input"
+             placeholder="🔍 Chercher par nom…"
+             oninput="filterCfPicker(this.value)"
+             autocomplete="off"
+             style="width:100%;">
+    </div>
+    <div id="cf-picker-list" style="overflow-y:auto;flex:1;"></div>
+  </div>
+</div>
+
 <div class="tabs">
   <div class="tab active" onclick="switchTab('scan')">📷 Scanner</div>
   <div class="tab" onclick="switchTab('history')">📅 Historique</div>
@@ -743,6 +791,7 @@
       <span>🍽️ Ouverture partielle</span>
     </label>
     <div style="font-size:12px;color:var(--text-dim);">Note l'ouverture dans l'historique sans retirer le produit de la chambre froide — pour quand il en reste après usage.</div>
+    <button class="btn-cf-pick" id="btn-cf-pick" onclick="openCfPicker()" style="display:none;">📋 Choisir un article sans scanner</button>
   </div>
 
   <div class="bluetooth-scan-zone">
@@ -834,11 +883,15 @@ let driveFolderId = null;
 let produitsDict = {};  // { code: nom }
 let currentScan = null; // { code, nom, date, heure }
 let tokenClient = null;
+let refreshTimer = null;   // setTimeout handle pour le renouvellement automatique du token
+let silentAttempt = false; // true quand on renouvelle silencieusement (pas de toast d'erreur)
+let tokenResolvers = [];   // fonctions resolve() en attente d'un token frais
 let html5QrCode = null;
 let scanActive = false;
 let currentView = 'days'; // 'days' | 'day' | 'search'
 let allEntries = []; // cache pour la recherche
-let cfStock = null;  // cache stock chambre froide
+let cfStock = null;      // cache stock chambre froide
+let cfMappingCache = null; // cache mapping code physique <-> code facture
 let cfFileId = null; // ID du fichier chambre-froide.json sur Drive
 let freezerItems = []; // état actuel du congélateur
 let selectedLabels = new Set(); // codes sélectionnés pour impression
@@ -858,13 +911,28 @@ const cache = {
 };
 
 // ── Verrou anti-doublon pour les écritures Drive ──
-// Empêche deux sauvegardes concurrentes du même fichier de créer deux fichiers en double.
-// Chaque nom de fichier a sa propre file d'attente (une écriture à la fois).
 const driveFileLocks = {};   // { filename: Promise en cours }
-const driveFileIdCache = {}; // { filename: fileId } — une fois trouvé/créé, on le réutilise toujours
+const driveFileIdCache = {}; // { filename: fileId }
+
+// ── Cache localStorage ──
+// Préfixe partagé entre les fichiers de l'app (même dossier Drive).
+// Permet un démarrage quasi-instantané : les données sont lues depuis LS,
+// Drive est consulté en arrière-plan pour maintenir la fraîcheur.
+const LS = 'sb_'; // "Scanner Boucherie"
+const _bgRefreshed = {}; // { filename: bool } — un seul refresh par session
+
+function lsData(filename)          { try { const s = localStorage.getItem(LS + 'd_' + filename); return s ? JSON.parse(s) : null; } catch { return null; } }
+function lsSetData(filename, data) { try { localStorage.setItem(LS + 'd_' + filename, JSON.stringify(data)); } catch {} }
+function lsFileId(filename)        { return localStorage.getItem(LS + 'fid_' + filename) || null; }
+function lsSetFileId(f, id)        { try { localStorage.setItem(LS + 'fid_' + f, id); } catch {} }
+function lsFolderId()              { return localStorage.getItem(LS + 'folder') || null; }
+function lsSetFolderId(id)         { try { localStorage.setItem(LS + 'folder', id); } catch {} }
 
 async function driveFindFileId(filename) {
   if (driveFileIdCache[filename]) return driveFileIdCache[filename];
+  // localStorage avoids the list API call on warm loads
+  const lsCached = lsFileId(filename);
+  if (lsCached) { driveFileIdCache[filename] = lsCached; return lsCached; }
   const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${driveFolderId}' in parents and trashed=false`)}&fields=files(id)`;
   const data = await driveGet(url);
   window._lastFindDebug = `driveFindFileId("${filename}")
@@ -873,18 +941,25 @@ driveFolderId utilisé: ${driveFolderId}
 Réponse brute: ${JSON.stringify(data)}`;
   if (data.files?.length) {
     driveFileIdCache[filename] = data.files[0].id;
+    lsSetFileId(filename, data.files[0].id);
     return data.files[0].id;
   }
   return null;
 }
 
-// Sauvegarde un JSON sous un nom de fichier donné, dans le dossier racine Scanner Boucherie.
-// Sérialise les écritures concurrentes sur le même fichier pour éviter les doublons sur Drive.
-async function driveSaveNamedJson(filename, data) {
+// Debounce des écritures Drive : plusieurs modifications rapides → une seule requête
+// (1.5 s après la dernière). localStorage est toujours mis à jour immédiatement.
+const _writeTimers = {}; // { filename: timeoutId }
+const _writePending = {}; // { filename: latestData }
+
+async function _driveFlush(filename) {
+  const data = _writePending[filename];
+  if (data === undefined) return;
+  delete _writePending[filename];
+
   const run = async () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     let fileId = await driveFindFileId(filename);
-
     if (fileId) {
       await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
         method: 'PATCH',
@@ -899,24 +974,52 @@ async function driveSaveNamedJson(filename, data) {
         method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form
       });
       const created = await r.json();
-      if (created.id) driveFileIdCache[filename] = created.id;
+      if (created.id) { driveFileIdCache[filename] = created.id; lsSetFileId(filename, created.id); }
     }
   };
-
-  // Chaîne cette écriture après celles déjà en cours sur le même fichier
   const previous = driveFileLocks[filename] || Promise.resolve();
-  const current = previous.then(run, run); // s'exécute même si la précédente a échoué
+  const current = previous.then(run, run);
   driveFileLocks[filename] = current;
   return current;
 }
 
+async function driveSaveNamedJson(filename, data) {
+  // localStorage mis à jour immédiatement — lecture suivante instantanée
+  lsSetData(filename, data);
+  _writePending[filename] = data;
+  // Annule le timer précédent et en repart pour 1.5 s
+  clearTimeout(_writeTimers[filename]);
+  _writeTimers[filename] = setTimeout(() => _driveFlush(filename), 1500);
+}
+
 async function driveLoadNamedJson(filename) {
+  // Retourne le cache localStorage immédiatement si disponible
+  const cached = lsData(filename);
+  if (cached !== null) {
+    // Rafraîchit Drive en arrière-plan une seule fois par session
+    if (!_bgRefreshed[filename] && driveFolderId) {
+      _bgRefreshed[filename] = true;
+      (async () => {
+        try {
+          const fid = await driveFindFileId(filename);
+          if (!fid) return;
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (r.ok) lsSetData(filename, await r.json());
+        } catch {}
+      })();
+    }
+    return cached;
+  }
+  // Cache vide — fetch Drive (premier lancement ou cache effacé)
   const fileId = await driveFindFileId(filename);
   if (!fileId) return null;
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+  let r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
-  return r.json();
+  if (r.status === 401) { await waitForFreshToken(); r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); }
+  const data = await r.json();
+  lsSetData(filename, data);
+  return data;
 }
 
 // ═══════════════════════════════════════
@@ -931,14 +1034,30 @@ function initGoogleAuth() {
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: async (response) => {
-      if (response.error) { showToast('Erreur auth', 'error'); return; }
+      if (response.error) {
+        if (!silentAttempt) showToast('Erreur auth', 'error');
+        silentAttempt = false;
+        // Résout quand même les promesses en attente pour ne pas bloquer indéfiniment
+        tokenResolvers.forEach(r => r());
+        tokenResolvers = [];
+        return;
+      }
+      const firstConnect = !accessToken;
       accessToken = response.access_token;
-      // Stocke le token avec son expiry (1h par défaut Google)
-      const expiry = Date.now() + (response.expires_in || 3600) * 1000;
+      const expiresIn = response.expires_in || 3600;
+      const expiry = Date.now() + expiresIn * 1000;
       localStorage.setItem('ga_token', accessToken);
-      localStorage.setItem('ga_expiry', expiry);
+      localStorage.setItem('ga_expiry', String(expiry));
+      localStorage.setItem('ga_had_session', '1');
+      // Planifie un refresh silencieux 5 min avant l'expiry
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, (expiresIn - 300) * 1000));
+      silentAttempt = false;
+      // Résout les promesses en attente d'un token frais (ex: retry après 401)
+      tokenResolvers.forEach(r => r());
+      tokenResolvers = [];
       setConnectedUI();
-      await initDrive();
+      if (firstConnect) await initDrive();
     }
   });
 }
@@ -950,11 +1069,40 @@ function setConnectedUI() {
 
 function handleAuth() {
   if (accessToken) return;
+  silentAttempt = false;
   tokenClient.requestAccessToken();
 }
 
+function doSilentRefresh() {
+  if (!tokenClient) return;
+  silentAttempt = true;
+  tokenClient.requestAccessToken({ prompt: '' });
+}
+
+// Attend un token frais — utilisé par les appels Drive qui reçoivent un 401
+function waitForFreshToken() {
+  return new Promise(resolve => {
+    tokenResolvers.push(resolve);
+    const idx = tokenResolvers.length - 1;
+    doSilentRefresh();
+    setTimeout(() => {
+      const i = tokenResolvers.indexOf(resolve);
+      if (i !== -1) tokenResolvers.splice(i, 1);
+      resolve();
+    }, 8000);
+  });
+}
+
 async function initDrive() {
-  driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  // Restaure le folder ID depuis localStorage pour éviter un appel API au démarrage
+  const cachedFolder = lsFolderId();
+  if (cachedFolder) {
+    driveFolderId = cachedFolder;
+    const ck = `root::${DRIVE_FOLDER_NAME}`;
+    folderIdCache[ck] = cachedFolder;
+  } else {
+    driveFolderId = await getOrCreateFolder(DRIVE_FOLDER_NAME, null);
+  }
   produitsDict = await loadProduitsJson();
   showToast('Drive connecté ✓', 'success');
 }
@@ -963,7 +1111,11 @@ async function initDrive() {
 // DRIVE HELPERS
 // ═══════════════════════════════════════
 async function driveGet(url) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  let r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (r.status === 401) {
+    await waitForFreshToken();
+    r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  }
   return r.json();
 }
 
@@ -973,6 +1125,11 @@ const folderLocks = {};
 async function getOrCreateFolder(name, parentId) {
   const cacheKey = `${parentId || 'root'}::${name}`;
   if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
+  // Pour le dossier racine, vérifie localStorage d'abord
+  if (!parentId) {
+    const lsCached = lsFolderId();
+    if (lsCached) { folderIdCache[cacheKey] = lsCached; return lsCached; }
+  }
 
   const run = async () => {
     if (folderIdCache[cacheKey]) return folderIdCache[cacheKey];
@@ -981,6 +1138,7 @@ async function getOrCreateFolder(name, parentId) {
     const data = await driveGet(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
     if (data.files && data.files.length > 0) {
       folderIdCache[cacheKey] = data.files[0].id;
+      if (!parentId) lsSetFolderId(data.files[0].id);
       return data.files[0].id;
     }
 
@@ -993,6 +1151,7 @@ async function getOrCreateFolder(name, parentId) {
     });
     const f = await r.json();
     folderIdCache[cacheKey] = f.id;
+    if (!parentId) lsSetFolderId(f.id);
     return f.id;
   };
 
@@ -1373,6 +1532,8 @@ function toggleDlcMode(checked) {
 
 function togglePartialMode(checked) {
   partialModeActive = checked;
+  const pickBtn = document.getElementById('btn-cf-pick');
+  if (pickBtn) pickBtn.style.display = checked ? 'block' : 'none';
   if (checked) {
     // Tous les modes de scan spécifiques sont mutuellement exclusifs
     if (meatModeActive) {
@@ -1385,6 +1546,69 @@ function togglePartialMode(checked) {
     }
     showToast('Mode ouverture partielle activé', 'success');
   }
+}
+
+// ─── PICKER CHAMBRE FROIDE (ouverture partielle sans code-barres) ───
+let cfPickerItems = [];
+
+async function openCfPicker() {
+  if (!accessToken) { showToast("Connecte-toi d'abord à Drive", 'error'); return; }
+  const modal = document.getElementById('cf-picker-modal');
+  modal.style.display = 'flex';
+  document.getElementById('cf-picker-search').value = '';
+  document.getElementById('cf-picker-list').innerHTML =
+    '<div style="padding:16px;color:var(--text-dim);font-size:13px;"><span class="spinner"></span>Chargement…</div>';
+
+  const stock = await loadCfStock();
+  // Déduplique par nom — on garde un représentant par produit distinct
+  const seen = new Set();
+  cfPickerItems = stock.filter(s => {
+    const key = (s.nom || s.codeFacture || s.codePhysique || '').toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr'));
+
+  renderCfPickerList('');
+  setTimeout(() => document.getElementById('cf-picker-search')?.focus(), 120);
+}
+
+function filterCfPicker(q) {
+  renderCfPickerList(q);
+}
+
+function renderCfPickerList(q) {
+  const list = document.getElementById('cf-picker-list');
+  if (!list) return;
+  const filtered = q.trim()
+    ? cfPickerItems.filter(s => (s.nom || '').toLowerCase().includes(q.toLowerCase()))
+    : cfPickerItems;
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:16px;font-size:13px;color:var(--text-dim);">Aucun article trouvé</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(s => {
+    const code = s.codePhysique || s.codeFacture || '';
+    const dlcStr = s.dlc ? new Date(s.dlc).toLocaleDateString('fr-FR') : '—';
+    const safeCode = code.replace(/'/g, "\\'");
+    return `<div class="cf-picker-item" onclick="pickCfItem('${safeCode}')">
+      <div class="cf-picker-item-nom">${s.nom || 'Sans nom'}</div>
+      <div class="cf-picker-item-meta">DLC : ${dlcStr} · Qté : ${s.qty ?? '—'} · ${code}</div>
+    </div>`;
+  }).join('');
+}
+
+async function pickCfItem(code) {
+  closeCfPickerModal();
+  await onCodeDetected(code);
+}
+
+function closeCfPickerModal() {
+  document.getElementById('cf-picker-modal').style.display = 'none';
+}
+
+function closeCfPickerOverlay(event) {
+  if (event.target === document.getElementById('cf-picker-modal')) closeCfPickerModal();
 }
 
 async function handleDlcModeScan(code) {
@@ -1705,9 +1929,11 @@ async function loadCfStock() {
 }
 
 async function loadCfMapping() {
+  if (cfMappingCache !== null) return cfMappingCache;
   if (!accessToken || !driveFolderId) return {};
   const data = await driveLoadNamedJson('cf-mapping.json');
-  return data || {};
+  cfMappingCache = data || {};
+  return cfMappingCache;
 }
 
 async function saveCfStock() {
@@ -1716,6 +1942,7 @@ async function saveCfStock() {
 }
 
 async function saveCfMapping(mapping) {
+  cfMappingCache = mapping;
   await driveSaveNamedJson('cf-mapping.json', mapping);
 }
 
@@ -2272,6 +2499,7 @@ async function confirmImportJson() {
       const current = (await driveLoadNamedJson('cf-mapping.json')) || {};
       addedCount = Object.keys(parsed).filter(k => !(k in current)).length;
       merged = { ...current, ...parsed };
+      cfMappingCache = merged; // invalide le cache en-mémoire
 
     } else if (target === 'congelateur.json') {
       // Tableau : dédoublonne par (nom, date)
@@ -2301,6 +2529,7 @@ async function confirmImportJson() {
     }
 
     delete driveFileIdCache[target];
+    try { localStorage.removeItem(LS + 'fid_' + target); } catch {}
     await driveSaveNamedJson(target, merged);
 
     showToast(`${target} fusionné — ${addedCount} ajout${addedCount > 1 ? 's' : ''} ✓`, 'success');
@@ -2329,25 +2558,31 @@ function showToast(msg, type = '') {
 
 // Init
 window.addEventListener('load', () => {
-  // Tente de restaurer le token depuis localStorage
-  const savedToken = localStorage.getItem('ga_token');
+  const savedToken  = localStorage.getItem('ga_token');
   const savedExpiry = localStorage.getItem('ga_expiry');
-  if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
-    accessToken = savedToken;
-    setConnectedUI();
-    // Charge la lib puis initDrive sans redemander l'auth
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = () => { initGoogleAuth(); initDrive(); };
-    document.head.appendChild(s);
-  } else {
-    localStorage.removeItem('ga_token');
-    localStorage.removeItem('ga_expiry');
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = initGoogleAuth;
-    document.head.appendChild(s);
-  }
+  const hadSession  = localStorage.getItem('ga_had_session');
+
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = async () => {
+    initGoogleAuth();
+    if (savedToken && savedExpiry && Date.now() < parseInt(savedExpiry)) {
+      // Token encore valide — connexion directe
+      accessToken = savedToken;
+      setConnectedUI();
+      const remaining = parseInt(savedExpiry) - Date.now();
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(doSilentRefresh, Math.max(10000, remaining - 300000));
+      await initDrive();
+    } else if (hadSession) {
+      // Token expiré mais session passée connue — reconnexion silencieuse sans popup
+      localStorage.removeItem('ga_token');
+      localStorage.removeItem('ga_expiry');
+      doSilentRefresh();
+    }
+    // Sinon (première utilisation) : l'utilisateur clique sur Se connecter
+  };
+  document.head.appendChild(s);
   cleanOldFolders();
 
   // ── Mode rafale (scanner Bluetooth) ──
