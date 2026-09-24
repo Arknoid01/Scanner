@@ -1,0 +1,973 @@
+// ═══════════════════════════════════════
+// SCANNER BOUCHERIE — page principale
+// ═══════════════════════════════════════
+// Toutes les données sont sur la tablette (voir store.js). Plus de connexion Google.
+
+// ── STATE ──
+let produitsDict = {};      // { code: nom }
+let cfStock = null;         // lots de la chambre froide
+let cfMappingCache = null;  // code physique <-> code facture
+let freezerItems = [];
+let selectedLabels = new Set();
+let allEntries = [];        // cache pour la recherche dans l'historique
+
+let mode = 'sortie';        // 'sortie' | 'viande' | 'dlc' | 'partiel'
+let meatModeDlc = null;     // DLC de la bête en cours (mode viande)
+let currentScan = null;     // scan affiché : { code, nom, date, entryId }
+let pendingUndo = null;     // { date, entryId, cfRestore } — annulation possible quelques secondes
+let undoTimer = null;
+const UNDO_MS = 8000;
+
+// Les scans sont traités un par un, dans l'ordre (rafale de la douchette)
+let scanQueue = Promise.resolve();
+function queueScan(code) {
+  scanQueue = scanQueue.then(() => handleScan(code)).catch(e => {
+    console.error(e);
+    showToast('Erreur pendant le scan', 'error');
+  });
+}
+
+// Valeur utilisable dans un attribut onclick="fn(...)"
+const jsArg = v => esc(JSON.stringify(v));
+
+// ═══════════════════════════════════════
+// DONNÉES
+// ═══════════════════════════════════════
+async function saveProduitsJson() { await Store.save('produits.json', produitsDict); }
+
+async function loadCfStock() {
+  if (cfStock) return cfStock;
+  cfStock = (await Store.load('chambre-froide.json')) || [];
+  return cfStock;
+}
+async function saveCfStock() { if (cfStock) await Store.save('chambre-froide.json', cfStock); }
+
+async function loadCfMapping() {
+  if (cfMappingCache) return cfMappingCache;
+  cfMappingCache = (await Store.load('cf-mapping.json')) || {};
+  return cfMappingCache;
+}
+async function saveCfMapping(mapping) { cfMappingCache = mapping; await Store.save('cf-mapping.json', mapping); }
+
+function newCfId() { return 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6); }
+
+// ═══════════════════════════════════════
+// AIGUILLAGE DES SCANS
+// ═══════════════════════════════════════
+function onBarcode(code) {
+  const tab = document.querySelector('.tab.active')?.dataset.tab;
+  if (tab === 'freezer') { queueFreezerScan(code); return; }
+  if (tab !== 'scan') switchTab('scan');
+  queueScan(code);
+}
+
+async function handleScan(code) {
+  finalizeUndo();
+  flashReady();
+  if (mode === 'viande') return handleMeatScan(code);
+  if (mode === 'dlc') return handleDlcModeScan(code);
+  return handleExitScan(code);
+}
+
+function flashReady() {
+  const z = document.getElementById('ready-zone');
+  z.classList.add('flash');
+  setTimeout(() => z.classList.remove('flash'), 400);
+  if (navigator.vibrate) navigator.vibrate(80);
+}
+
+function showResult(code, cls, html) {
+  document.getElementById('result-code').textContent = code;
+  document.getElementById('result-card').className = `result-card visible ${cls}`;
+  document.getElementById('result-area').innerHTML = html;
+}
+
+function hideResult() {
+  document.getElementById('result-card').className = 'result-card';
+  currentScan = null;
+}
+
+const badge = (color, bg, text) =>
+  `<div style="margin-top:8px;padding:10px 12px;background:${bg};border:1px solid ${color};border-radius:8px;font-size:14px;color:${color};">${text}</div>`;
+const BADGE_BLUE = ['#7dd3fc', 'rgba(37,99,235,.15)'];
+const BADGE_GREEN = ['var(--green)', 'rgba(34,197,94,.15)'];
+const BADGE_YELLOW = ['#fbbf24', 'rgba(245,158,11,.15)'];
+
+// ═══════════════════════════════════════
+// MODES
+// ═══════════════════════════════════════
+async function setMode(next) {
+  if (next === 'viande') {
+    const dlc = await pickDlc('DLC de la bête', 'Toutes les poches scannées auront cette DLC');
+    if (!dlc) return; // annulé : on reste dans le mode actuel
+    meatModeDlc = dlc;
+  } else {
+    meatModeDlc = null;
+  }
+  mode = next;
+  finalizeUndo();
+  hideResult();
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  renderModeContext();
+}
+
+function renderModeContext() {
+  const el = document.getElementById('mode-context');
+  const ready = document.getElementById('ready-text');
+  if (mode === 'viande') {
+    el.innerHTML = `<span>🥩 DLC de la bête : <strong>${formatDlcDisplay(meatModeDlc)}</strong></span>
+      <button onclick="changeMeatDlc()">🔄 Nouvelle bête</button>`;
+    ready.textContent = 'Scanne les poches en chaîne';
+  } else if (mode === 'dlc') {
+    el.innerHTML = `<span>📅 Chaque scan te demande sa DLC, puis range le produit en chambre froide.</span>`;
+    ready.textContent = 'Scanne un produit à ranger';
+  } else if (mode === 'partiel') {
+    el.innerHTML = `<span>🍽️ Note l'ouverture sans retirer le produit du stock.</span>
+      <button onclick="openCfPicker()">📋 Choisir sans scanner</button>`;
+    ready.textContent = 'Scanne le produit entamé';
+  } else {
+    el.innerHTML = '';
+    ready.textContent = 'Prêt — scanne un produit';
+  }
+}
+
+async function changeMeatDlc() {
+  const dlc = await pickDlc('Nouvelle bête', 'Choisis la DLC des prochaines poches');
+  if (!dlc) return;
+  meatModeDlc = dlc;
+  renderModeContext();
+  showToast('DLC mise à jour ✓', 'success');
+}
+
+// ═══════════════════════════════════════
+// SORTIE / OUVERTURE — enregistrement automatique
+// ═══════════════════════════════════════
+async function checkCfMatch(code) {
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  const codeFacture = mapping[code] || code;
+  // Plusieurs lots : on prend la DLC la plus proche (premier entré, premier sorti)
+  const candidats = stock
+    .filter(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture)
+    .sort((a, b) => (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
+  return candidats[0] || null;
+}
+
+// Retire 1 du lot ; renvoie de quoi annuler
+async function deductFromCf(item) {
+  const snapshot = { ...item };
+  item.qty--;
+  const removed = item.qty <= 0;
+  if (removed) cfStock = cfStock.filter(s => s.id !== item.id);
+  await saveCfStock();
+  return { id: item.id, removed, snapshot };
+}
+
+async function restoreCf(restore) {
+  if (!restore) return;
+  const stock = await loadCfStock();
+  if (restore.removed) stock.push(restore.snapshot);
+  else { const it = stock.find(s => s.id === restore.id); if (it) it.qty++; }
+  await saveCfStock();
+}
+
+async function handleExitScan(code) {
+  const partial = mode === 'partiel';
+  const cfItem = await checkCfMatch(code);
+  const nom = cfItem ? cfItem.nom : produitsDict[code];
+
+  if (!nom) { showUnknownForExit(code); return; }
+
+  await recordExit(code, nom, cfItem, partial);
+}
+
+// Enregistre la sortie (ou l'ouverture) : stock + historique, avec annulation possible
+async function recordExit(code, nom, cfItem, partial) {
+  let cfRestore = null;
+  if (cfItem && !partial) cfRestore = await deductFromCf(cfItem);
+  if (!produitsDict[code]) { produitsDict[code] = nom; saveProduitsJson(); }
+
+  const entry = await Store.addHistoryEntry({ code, nom, action: partial ? 'ouverture' : 'sortie' });
+  currentScan = { code, nom, date: entry.date, entryId: entry.id };
+
+  let info = '📋 Noté dans l\'historique';
+  if (cfItem && partial) info = `🍽️ Ouverture notée — reste en chambre froide`;
+  else if (cfItem) {
+    const left = cfRestore.removed ? 0 : cfItem.qty;
+    info = `🧊 Sorti de la chambre froide — reste ${left}`;
+  }
+  const [c, bg] = cfItem && partial ? BADGE_YELLOW : BADGE_BLUE;
+
+  showResult(code, 'known', `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div class="result-name" id="scan-result-name">${esc(nom)}</div>
+      <button class="btn-edit" onclick="editScanName()">✏️ Modifier</button>
+    </div>
+    <div id="scan-edit-area"></div>
+    ${badge(c, bg, info)}
+    ${undoRowHtml()}`);
+  startUndo({ date: entry.date, entryId: entry.id, cfRestore });
+  renderRecent();
+}
+
+// Produit inconnu : on demande juste son nom (ou on le relie à un article de la chambre froide)
+async function showUnknownForExit(code) {
+  currentScan = { code, nom: null };
+  showResult(code, 'unknown', `
+    <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
+    <input class="name-input" id="name-input" type="text" placeholder="Ex : Gratin Dauphinois"
+           onkeydown="if(event.key==='Enter') confirmUnknownExit(${jsArg(code)})">
+    <button class="btn-save" style="margin-top:10px;" onclick="confirmUnknownExit(${jsArg(code)})">✓ Enregistrer</button>
+    <div id="cf-link-area"></div>`);
+  setTimeout(() => document.getElementById('name-input')?.focus(), 100);
+
+  // Articles de la chambre froide encore sans code-barres : un appui suffit pour les relier
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  const sansCode = stock.filter(item => !item.codePhysique && !mapping[item.codeFacture]);
+  const area = document.getElementById('cf-link-area');
+  if (!area || !sansCode.length) return;
+  area.innerHTML = `
+    <div style="margin-top:12px;padding:10px 12px;background:rgba(37,99,235,.08);border:1px solid var(--border);border-radius:8px;">
+      <div style="font-size:13px;color:var(--text-dim);margin-bottom:8px;">🧊 Ou c'est un de ces articles de la chambre froide ? Appuie dessus :</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${sansCode.map(item => `<button class="btn-edit" style="text-align:left;padding:10px 12px;font-size:14px;"
+            onclick="linkAndExit(${jsArg(code)}, ${jsArg(item.id)})">${esc(item.nom)} <span style="color:var(--text-dim);font-size:12px;">· DLC ${formatDlcDisplay(item.dlc)}</span></button>`).join('')}
+      </div>
+    </div>`;
+}
+
+async function confirmUnknownExit(code) {
+  const nom = document.getElementById('name-input')?.value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+  produitsDict[code] = nom;
+  await saveProduitsJson();
+  await recordExit(code, nom, null, mode === 'partiel');
+}
+
+// Relie le code scanné à un article de la chambre froide, puis enregistre la sortie
+async function linkAndExit(code, itemId) {
+  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
+  const item = stock.find(s => s.id === itemId);
+  if (!item) return;
+  if (item.codeFacture) {
+    mapping[code] = item.codeFacture;
+    mapping[item.codeFacture] = code;
+  }
+  item.codePhysique = code;
+  await Promise.all([saveCfMapping(mapping), saveCfStock()]);
+  if (!produitsDict[code]) { produitsDict[code] = item.nom; await saveProduitsJson(); }
+  showToast(`Lié à « ${item.nom} » ✓`, 'success');
+  await recordExit(code, item.nom, item, mode === 'partiel');
+}
+
+function editScanName() {
+  const area = document.getElementById('scan-edit-area');
+  area.innerHTML = `
+    <div class="edit-inline">
+      <input type="text" id="scan-rename-input" value="${esc(currentScan?.nom || '')}" placeholder="Nouveau nom…"
+             onkeydown="if(event.key==='Enter') confirmScanRename()">
+      <button class="btn-confirm" onclick="confirmScanRename()">✓</button>
+    </div>`;
+  setTimeout(() => document.getElementById('scan-rename-input')?.focus(), 100);
+}
+
+async function confirmScanRename() {
+  const val = document.getElementById('scan-rename-input')?.value.trim();
+  if (!val || !currentScan) return;
+  await renameProductEverywhere(currentScan.code, val);
+  currentScan.nom = val;
+  document.getElementById('scan-result-name').textContent = val;
+  document.getElementById('scan-edit-area').innerHTML = '';
+  showToast('Nom mis à jour ✓', 'success');
+  renderRecent();
+}
+
+// ── Annulation ──
+function undoRowHtml() {
+  return `<div class="undo-row" id="undo-row">
+    <button class="btn-undo" onclick="undoLast()">↩ Annuler</button>
+    <div class="undo-timer"><div style="animation-duration:${UNDO_MS}ms"></div></div>
+  </div>`;
+}
+
+function startUndo(info) {
+  pendingUndo = info;
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(finalizeUndo, UNDO_MS);
+}
+
+function finalizeUndo() {
+  clearTimeout(undoTimer);
+  pendingUndo = null;
+  document.getElementById('undo-row')?.remove();
+}
+
+async function undoLast() {
+  const u = pendingUndo;
+  if (!u) return;
+  finalizeUndo();
+  await Store.removeHistoryEntry(u.date, u.entryId);
+  await restoreCf(u.cfRestore);
+  hideResult();
+  renderRecent();
+  showToast('Annulé ✓', 'success');
+}
+
+// ═══════════════════════════════════════
+// MODE VIANDE — réception en rafale, même DLC
+// ═══════════════════════════════════════
+async function handleMeatScan(code) {
+  const stock = await loadCfStock();
+  const item = stock.find(s => s.codePhysique === code && s.dlc === meatModeDlc);
+  if (item) {
+    item.qty++;
+    await saveCfStock();
+    showResult(code, 'known', `
+      <div class="result-name">${esc(item.nom)}</div>
+      ${badge(...BADGE_BLUE, `🥩 +1 — total : ${item.qty} en stock (DLC ${formatDlcDisplay(item.dlc)})`)}`);
+  } else if (produitsDict[code]) {
+    await addMeatItem(code, produitsDict[code]);
+  } else {
+    showResult(code, 'unknown', `
+      <div class="result-name unknown-label">Nouveau morceau — donne-lui un nom :</div>
+      <input class="name-input" id="meat-name-input" type="text" placeholder="Ex : Flanchet avec os"
+             onkeydown="if(event.key==='Enter') confirmMeatName(${jsArg(code)})">
+      <button class="btn-save" style="margin-top:10px;" onclick="confirmMeatName(${jsArg(code)})">✓ Créer l'article</button>`);
+    setTimeout(() => document.getElementById('meat-name-input')?.focus(), 100);
+  }
+}
+
+async function addMeatItem(code, nom) {
+  const stock = await loadCfStock();
+  stock.push({
+    id: newCfId(), nom, dlc: meatModeDlc, qty: 1, supplier: 'TRADIVAL',
+    codeFacture: code, codePhysique: code, dateEntree: localDateStr(new Date())
+  });
+  await saveCfStock();
+  showResult(code, 'known', `
+    <div class="result-name">${esc(nom)}</div>
+    ${badge(...BADGE_GREEN, `✓ Ajouté à la chambre froide — DLC ${formatDlcDisplay(meatModeDlc)}`)}`);
+  showToast(`${nom} ajouté ✓`, 'success');
+}
+
+async function confirmMeatName(code) {
+  const nom = document.getElementById('meat-name-input')?.value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+  if (!produitsDict[code]) { produitsDict[code] = nom; await saveProduitsJson(); }
+  document.activeElement?.blur();
+  await addMeatItem(code, nom);
+}
+
+// ═══════════════════════════════════════
+// MODE DLC — la DLC est choisie à chaque scan
+// ═══════════════════════════════════════
+async function handleDlcModeScan(code) {
+  const nom = produitsDict[code] || null;
+  const dlc = await pickDlc('DLC du produit', nom || `Code ${code}`);
+  if (!dlc) { hideResult(); return; }
+  if (!nom) {
+    showResult(code, 'unknown', `
+      <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
+      <input class="name-input" id="dlc-name-input" type="text" placeholder="Ex : Saucisson sec"
+             onkeydown="if(event.key==='Enter') confirmDlcModeName(${jsArg(code)}, ${jsArg(dlc)})">
+      <button class="btn-save" style="margin-top:10px;" onclick="confirmDlcModeName(${jsArg(code)}, ${jsArg(dlc)})">✓ Ranger en chambre froide</button>`);
+    setTimeout(() => document.getElementById('dlc-name-input')?.focus(), 100);
+    return;
+  }
+  await addToColdStorageWithDlc(code, nom, dlc);
+}
+
+async function confirmDlcModeName(code, dlc) {
+  const nom = document.getElementById('dlc-name-input')?.value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+  if (!produitsDict[code]) { produitsDict[code] = nom; await saveProduitsJson(); }
+  document.activeElement?.blur();
+  await addToColdStorageWithDlc(code, nom, dlc);
+}
+
+async function addToColdStorageWithDlc(code, nom, dlc) {
+  const stock = await loadCfStock();
+  // Même code et même DLC : on regroupe dans le même lot
+  let item = stock.find(s => (s.codePhysique === code || s.codeFacture === code) && s.dlc === dlc);
+  if (item) item.qty++;
+  else {
+    item = { id: newCfId(), nom, dlc, qty: 1, supplier: 'Saisie manuelle',
+             codeFacture: code, codePhysique: code, dateEntree: localDateStr(new Date()) };
+    stock.push(item);
+  }
+  await saveCfStock();
+  showResult(code, 'known', `
+    <div class="result-name">${esc(nom)}</div>
+    ${badge(...BADGE_BLUE, `🧊 Rangé en chambre froide — DLC ${formatDlcDisplay(dlc)} — total : ${item.qty}`)}`);
+  showToast(`${nom} ajouté ✓`, 'success');
+}
+
+// ═══════════════════════════════════════
+// CHOIX DANS LA CHAMBRE FROIDE (sans code-barres)
+// ═══════════════════════════════════════
+let cfPickerItems = [];
+
+async function openCfPicker() {
+  document.getElementById('cf-picker-modal').style.display = 'flex';
+  document.getElementById('cf-picker-search').value = '';
+  const stock = await loadCfStock();
+  const seen = new Set();
+  cfPickerItems = stock.filter(s => {
+    const key = (s.nom || s.codeFacture || s.codePhysique || '').toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr'));
+  renderCfPickerList('');
+}
+
+function renderCfPickerList(q) {
+  const list = document.getElementById('cf-picker-list');
+  const filtered = q.trim()
+    ? cfPickerItems.filter(s => (s.nom || '').toLowerCase().includes(q.toLowerCase()))
+    : cfPickerItems;
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:16px;font-size:14px;color:var(--text-dim);">Aucun article trouvé</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(s => {
+    const code = s.codePhysique || s.codeFacture || '';
+    return `<div class="cf-picker-item" onclick="pickCfItem(${jsArg(code)})">
+      <div class="cf-picker-item-nom">${esc(s.nom || 'Sans nom')}</div>
+      <div class="cf-picker-item-meta">DLC : ${formatDlcDisplay(s.dlc)} · Qté : ${s.qty ?? '—'} · ${esc(code)}</div>
+    </div>`;
+  }).join('');
+}
+
+function pickCfItem(code) { closeCfPickerModal(); queueScan(code); }
+function closeCfPickerModal() { document.getElementById('cf-picker-modal').style.display = 'none'; }
+function closeCfPickerOverlay(e) { if (e.target.id === 'cf-picker-modal') closeCfPickerModal(); }
+
+// ═══════════════════════════════════════
+// DERNIERS SCANS DU JOUR
+// ═══════════════════════════════════════
+async function renderRecent() {
+  const el = document.getElementById('recent-list');
+  const today = await Store.loadDay(localDateStr(new Date()));
+  if (!today.length) { el.innerHTML = ''; return; }
+  const last = today.slice(-6).reverse();
+  el.innerHTML = `<div class="recent-title">Aujourd'hui · ${today.length} scan${today.length > 1 ? 's' : ''}</div>
+    ${last.map(e => `<div class="recent-item">
+      <span>${e.action === 'ouverture' ? '🍽️ ' : ''}${esc(e.nom)}</span><span class="recent-time">${esc(e.heure)}</span>
+    </div>`).join('')}`;
+}
+
+// ═══════════════════════════════════════
+// HISTORIQUE
+// ═══════════════════════════════════════
+async function loadHistory() {
+  const el = document.getElementById('history-content');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>Chargement…</div>';
+  const days = await Store.listDays();
+  allEntries = [];
+  const counts = {};
+  for (const d of days) {
+    const entries = await Store.loadDay(d);
+    counts[d] = entries.length;
+    entries.forEach(e => allEntries.push({ ...e, date: d }));
+  }
+  if (!days.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">Aucun scan enregistré</div></div>';
+    return;
+  }
+  el.innerHTML = `<div class="days-list">${days.map(d => `
+    <div class="day-card" onclick="showDay(${jsArg(d)})">
+      <span class="day-date">${formatDate(d)}</span>
+      <span class="day-count">${counts[d]} produit${counts[d] > 1 ? 's' : ''}</span>
+    </div>`).join('')}</div>`;
+}
+
+async function showDay(date) {
+  const el = document.getElementById('history-content');
+  const entries = await Store.loadDay(date);
+  el.innerHTML = `
+    <button class="back-btn" onclick="loadHistory()">← Retour</button>
+    <div class="day-title">${formatDate(date)}</div>
+    <div class="entries-list">
+      ${entries.length ? entries.slice().reverse().map(renderEntry).join('')
+        : '<div class="empty-state"><div class="empty-text">Aucune entrée</div></div>'}
+    </div>`;
+}
+
+function renderEntry(e) {
+  return `<div class="entry-card">
+    <div class="entry-top">
+      <div class="entry-name">${e.action === 'ouverture' ? '🍽️ ' : ''}${esc(e.nom)}</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="entry-time">${esc(e.heure)}</div>
+        <button class="btn-edit" onclick="renameProduct(${jsArg(e.code)}, ${jsArg(e.nom || '')})">✏️</button>
+      </div>
+    </div>
+    <div class="entry-code">${esc(e.code)}</div>
+  </div>`;
+}
+
+function handleSearch() {
+  const q = document.getElementById('search-input').value.trim().toLowerCase();
+  const el = document.getElementById('history-content');
+  if (!q) { loadHistory(); return; }
+  const results = allEntries.filter(e => (e.nom && e.nom.toLowerCase().includes(q)) || (e.code || '').toLowerCase().includes(q));
+  if (!results.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">Aucun résultat</div></div>';
+    return;
+  }
+  const grouped = {};
+  results.forEach(e => { (grouped[e.nom] = grouped[e.nom] || []).push(e); });
+  el.innerHTML = `
+    <div class="search-results-title">${results.length} résultat${results.length > 1 ? 's' : ''}</div>
+    <div class="entries-list">
+      ${Object.entries(grouped).map(([nom, items]) => `
+        <div class="entry-card">
+          <div class="entry-name">${esc(nom)}</div>
+          <div class="entry-code">${esc(items[0].code)}</div>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
+            ${items.map(i => `<div style="font-size:12px;color:var(--text-dim);">${formatDate(i.date)} à ${esc(i.heure)}</div>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function renameProduct(code, currentNom) {
+  const newNom = prompt(`Renommer « ${currentNom} » :`, currentNom);
+  if (!newNom || newNom.trim() === currentNom) return;
+  await renameProductEverywhere(code, newNom.trim());
+  showToast(`Renommé en « ${newNom.trim()} » ✓`, 'success');
+  loadHistory();
+}
+
+// Renomme dans le dictionnaire et dans tout l'historique
+async function renameProductEverywhere(code, nom) {
+  produitsDict[code] = nom;
+  await saveProduitsJson();
+  for (const d of await Store.listDays()) {
+    const entries = await Store.loadDay(d);
+    let changed = false;
+    for (const e of entries) if (e.code === code && e.nom !== nom) { e.nom = nom; changed = true; }
+    if (changed) await Store.saveDay(d, entries);
+  }
+  allEntries = allEntries.map(e => e.code === code ? { ...e, nom } : e);
+}
+
+// ═══════════════════════════════════════
+// ÉTIQUETTES
+// ═══════════════════════════════════════
+function generateCode(nom) {
+  const ts = Date.now().toString(36).toUpperCase();
+  const hash = nom.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) & 0xFFFF, 0).toString(16).toUpperCase().padStart(4, '0');
+  return `BA${hash}${ts}`;
+}
+
+async function createLabel() {
+  const input = document.getElementById('label-name-input');
+  const nom = input.value.trim();
+  if (!nom) { showToast('Entre un nom de produit', 'error'); return; }
+  const code = generateCode(nom);
+  produitsDict[code] = nom;
+  await saveProduitsJson();
+  showBarcode(code, nom);
+  input.value = '';
+  showToast('Étiquette créée ✓', 'success');
+  loadLabels();
+}
+
+function showBarcode(code, nom) {
+  document.getElementById('barcode-nom').textContent = nom;
+  document.getElementById('barcode-code-display').textContent = code;
+  document.getElementById('barcode-preview').className = 'barcode-preview visible';
+  JsBarcode('#barcode-svg', code, { format: 'CODE128', width: 2, height: 60, displayValue: false, margin: 8 });
+}
+
+// Impression : la fenêtre d'impression Android (window.print ne marche pas dans une app)
+function doPrint() {
+  if (Native.available) Native.plugin.print({ name: 'Étiquettes' }).catch(() => showToast('Impression impossible', 'error'));
+  else window.print();
+}
+
+function printBarcode() {
+  const nom = document.getElementById('barcode-nom').textContent;
+  const code = document.getElementById('barcode-code-display').textContent;
+  document.getElementById('print-area').innerHTML = `
+    <div style="text-align:center;font-family:sans-serif;padding:20px;">
+      <div style="font-size:20px;font-weight:700;margin-bottom:8px;">${esc(nom)}</div>
+      <svg id="print-barcode-svg"></svg>
+      <div style="font-family:monospace;font-size:12px;margin-top:6px;color:#666;">${esc(code)}</div>
+    </div>`;
+  JsBarcode('#print-barcode-svg', code, { format: 'CODE128', width: 3, height: 80, displayValue: false, margin: 10 });
+  doPrint();
+}
+
+async function loadLabels() {
+  selectedLabels.clear();
+  const el = document.getElementById('labels-list-content');
+  const labels = Object.entries(produitsDict).filter(([code]) => code.startsWith('BA'));
+  if (!labels.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🏷️</div><div class="empty-text">Aucune étiquette créée</div></div>';
+    return;
+  }
+  if (!allEntries.length) await loadAllEntries();
+  const lastUse = {};
+  allEntries.forEach(e => { if (!lastUse[e.code] || e.date > lastUse[e.code].date) lastUse[e.code] = e; });
+  el.innerHTML = `
+    <div class="label-select-bar" id="label-select-bar">
+      <span id="select-count">0 sélectionné</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-cancel-select" onclick="clearLabelSelection()">Annuler</button>
+        <button class="btn-print-selected" onclick="printSelected()">🖨️ Imprimer</button>
+      </div>
+    </div>
+    <div style="font-size:13px;color:var(--text-dim);font-weight:500;">${labels.length} étiquette${labels.length > 1 ? 's' : ''} — <span style="color:var(--accent)">appuie pour sélectionner</span></div>
+    <div class="labels-list">
+      ${labels.map(([code, nom]) => {
+        const last = lastUse[code];
+        return `<div class="label-card" id="lcard-${esc(code)}" onclick="toggleLabelSelect(${jsArg(code)})">
+          <div class="label-checkbox" id="lchk-${esc(code)}"></div>
+          <div style="flex:1;">
+            <div class="label-card-name">${esc(nom)}</div>
+            <div class="label-card-code">${esc(code)}</div>
+            ${last ? `<div class="label-card-last">Dernier scan : ${formatDate(last.date)} à ${esc(last.heure)}</div>` : '<div class="label-card-last" style="color:var(--accent)">Jamais scanné</div>'}
+          </div>
+          <button class="btn-show-barcode" onclick="event.stopPropagation();showBarcode(${jsArg(code)}, ${jsArg(nom)})">📄</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+async function loadAllEntries() {
+  allEntries = [];
+  for (const d of await Store.listDays()) (await Store.loadDay(d)).forEach(e => allEntries.push({ ...e, date: d }));
+}
+
+function toggleLabelSelect(code) {
+  const on = !selectedLabels.has(code);
+  if (on) selectedLabels.add(code); else selectedLabels.delete(code);
+  document.getElementById('lcard-' + code)?.classList.toggle('selected', on);
+  document.getElementById('lchk-' + code).textContent = on ? '✓' : '';
+  updateSelectBar();
+}
+
+function updateSelectBar() {
+  const bar = document.getElementById('label-select-bar');
+  if (!bar) return;
+  bar.classList.toggle('visible', selectedLabels.size > 0);
+  document.getElementById('select-count').textContent = `${selectedLabels.size} sélectionné${selectedLabels.size > 1 ? 's' : ''}`;
+}
+
+function clearLabelSelection() {
+  selectedLabels.forEach(code => {
+    document.getElementById('lcard-' + code)?.classList.remove('selected');
+    document.getElementById('lchk-' + code).textContent = '';
+  });
+  selectedLabels.clear();
+  updateSelectBar();
+}
+
+function printSelected() {
+  if (!selectedLabels.size) return;
+  const codes = [...selectedLabels];
+  document.getElementById('print-area').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:16px;padding:20px;">${codes.map((code, i) => `
+    <div style="text-align:center;border:1px solid #ccc;border-radius:8px;padding:12px;min-width:160px;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${esc(produitsDict[code] || code)}</div>
+      <svg id="psvg-${i}"></svg>
+      <div style="font-family:monospace;font-size:10px;color:#666;margin-top:4px;">${esc(code)}</div>
+    </div>`).join('')}</div>`;
+  codes.forEach((code, i) => JsBarcode('#psvg-' + i, code, { format: 'CODE128', width: 2, height: 50, displayValue: false, margin: 6 }));
+  doPrint();
+}
+
+// ═══════════════════════════════════════
+// CONGÉLATEUR
+// ═══════════════════════════════════════
+async function saveFreezerJson() { await Store.save('congelateur.json', freezerItems); }
+
+async function loadFreezer() {
+  freezerItems = (await Store.load('congelateur.json')) || [];
+  renderFreezer();
+}
+
+function renderFreezer() {
+  const el = document.getElementById('freezer-content');
+  if (!freezerItems.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">❄️</div><div class="empty-text">Congélateur vide</div></div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="freezer-header"><div class="freezer-count">${freezerItems.length} produit${freezerItems.length > 1 ? 's' : ''}</div></div>
+    <div class="freezer-list">
+      ${freezerItems.map((item, i) => `
+        <div class="freezer-card">
+          <div style="font-size:24px;">❄️</div>
+          <div class="freezer-card-info">
+            <div class="freezer-card-name">${esc(item.nom)}</div>
+            <div class="freezer-card-date">Entré le ${formatDate(item.date)}</div>
+            <div class="freezer-card-age">${daysAgo(item.date)}</div>
+          </div>
+          <button class="btn-remove" onclick="removeFreezerItem(${i})">🗑️</button>
+        </div>`).join('')}
+    </div>`;
+}
+
+function daysAgo(dateStr) {
+  const diff = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00')) / 86400000);
+  if (diff <= 0) return "Entré aujourd'hui";
+  if (diff === 1) return 'Il y a 1 jour';
+  return `Il y a ${diff} jours`;
+}
+
+async function addFreezerItem(nom, code) {
+  freezerItems.unshift({ nom, code: code || '', date: localDateStr(new Date()) });
+  await saveFreezerJson();
+  renderFreezer();
+  showToast(`${nom} ajouté au congélateur ✓`, 'success');
+}
+
+async function removeFreezerItem(index) {
+  const item = freezerItems[index];
+  if (!confirm(`Retirer « ${item.nom} » du congélateur ?`)) return;
+  freezerItems.splice(index, 1);
+  await saveFreezerJson();
+  renderFreezer();
+  showToast('Retiré ✓', 'success');
+}
+
+function queueFreezerScan(code) {
+  scanQueue = scanQueue.then(async () => {
+    if (navigator.vibrate) navigator.vibrate(80);
+    const nom = produitsDict[code];
+    if (nom) { await addFreezerItem(nom, code); return; }
+    const input = document.getElementById('freezer-manual-input');
+    input.value = '';
+    input.placeholder = `Nom pour ${code}…`;
+    input.dataset.pendingCode = code;
+    input.focus();
+    showToast('Produit inconnu — entre le nom', 'error');
+  });
+}
+
+async function addFreezerManual() {
+  const input = document.getElementById('freezer-manual-input');
+  const nom = input.value.trim();
+  if (!nom) return;
+  const pendingCode = input.dataset.pendingCode || '';
+  if (pendingCode && !produitsDict[pendingCode]) { produitsDict[pendingCode] = nom; await saveProduitsJson(); }
+  await addFreezerItem(nom, pendingCode);
+  input.value = '';
+  input.placeholder = 'Nom du produit…';
+  delete input.dataset.pendingCode;
+  input.blur();
+}
+
+// ═══════════════════════════════════════
+// RÉGLAGES — douchette, permissions, données
+// ═══════════════════════════════════════
+let bondedDevices = null;
+
+async function loadSettings() {
+  const el = document.getElementById('settings-content');
+  const s = await Native.status().catch(() => null);
+  const counts = {
+    produits: Object.keys(produitsDict).length,
+    cf: (await loadCfStock()).length,
+    jours: (await Store.listDays()).length,
+  };
+  const last = Store.lastBackup();
+
+  if (!s) {
+    el.innerHTML = `<div class="settings-card"><h3>Mode navigateur</h3>
+      <div class="settings-desc">Les réglages de la douchette n'existent que dans l'app installée sur la tablette.</div></div>
+      ${dataCardHtml(counts, last)}`;
+    return;
+  }
+
+  if (s.bluetoothGranted && bondedDevices === null) {
+    bondedDevices = (await Native.plugin.listBondedDevices().catch(() => ({ devices: [] }))).devices || [];
+  }
+
+  const perm = (ok, label, hint, action) => `
+    <div class="settings-row">
+      <div class="settings-label">${label}<small>${hint}</small></div>
+      ${ok ? '<span class="status-ok">✓ OK</span>' : `<button class="btn-action" onclick="${action}">Autoriser</button>`}
+    </div>`;
+
+  el.innerHTML = `
+    <div class="settings-card">
+      <h3>📡 Douchette Bluetooth</h3>
+      <div class="settings-desc">Quand cette douchette se connecte à la tablette, l'app passe devant tout le reste.
+        Elle doit d'abord être appairée dans les réglages Bluetooth d'Android.</div>
+      ${!s.bluetoothGranted ? `<button class="btn-action" onclick="askBluetooth()">Autoriser le Bluetooth</button>` : `
+        <div class="device-list">
+          ${(bondedDevices || []).length ? bondedDevices
+              .slice().sort((a, b) => b.likelyScanner - a.likelyScanner)
+              .map(d => `<div class="device-item ${d.address === s.targetAddress ? 'selected' : ''}"
+                  onclick="chooseScanner(${jsArg(d.address)}, ${jsArg(d.name)})">
+                <span>${d.likelyScanner ? '🔫' : '📱'} ${esc(d.name)}</span>
+                <small>${d.address === s.targetAddress ? '✓ choisie' : esc(d.address)}</small>
+              </div>`).join('')
+            : '<div class="settings-desc">Aucun appareil appairé.</div>'}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-action secondary" onclick="Native.plugin.openBluetoothSettings()">⚙️ Appairer une douchette</button>
+          <button class="btn-action secondary" onclick="bondedDevices=null;loadSettings()">🔄 Actualiser</button>
+        </div>`}
+    </div>
+
+    <div class="settings-card">
+      <h3>🔓 Autorisations</h3>
+      <div class="settings-desc">Nécessaires pour que l'app reste active et passe au premier plan toute seule.</div>
+      ${perm(s.bluetoothGranted, 'Bluetooth', 'Détecter la douchette', 'askBluetooth()')}
+      ${perm(s.notificationsGranted, 'Notifications', 'Notification permanente « Scanner actif »', 'askNotifications()')}
+      ${perm(s.overlayGranted, 'Superposition', 'Passer devant les autres apps', 'Native.plugin.openOverlaySettings()')}
+      ${perm(s.batteryUnrestricted, 'Batterie sans restriction', "Android ne coupe pas l’app", 'Native.plugin.openBatterySettings()')}
+      <div class="settings-row">
+        <div class="settings-label">Surveillance active<small>${s.serviceRunning ? 'En marche' : 'Arrêtée'}</small></div>
+        <label class="switch"><input type="checkbox" ${s.watchEnabled ? 'checked' : ''} onchange="setWatch(this.checked)"><span></span></label>
+      </div>
+      <div class="settings-row">
+        <div class="settings-label">Écran toujours allumé<small>Tant que l'app est ouverte</small></div>
+        <label class="switch"><input type="checkbox" ${s.keepScreenOn ? 'checked' : ''} onchange="Native.plugin.setKeepScreenOn({on:this.checked})"><span></span></label>
+      </div>
+    </div>
+
+    ${dataCardHtml(counts, last)}`;
+}
+
+function dataCardHtml(counts, last) {
+  return `
+    <div class="settings-card">
+      <h3>💾 Données</h3>
+      <div class="settings-desc">${counts.produits} produits · ${counts.cf} lots en chambre froide · ${counts.jours} jours d'historique<br>
+        Sauvegarde automatique chaque jour dans <strong>Téléchargements/ScannerBoucherie</strong> (14 dernières gardées).
+        ${last ? `Dernière : ${formatDlcDisplay(last)}.` : 'Aucune sauvegarde pour l\'instant.'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-action" onclick="document.getElementById('zip-input').click()">📥 Importer (ZIP Drive ou sauvegarde)</button>
+        <button class="btn-action secondary" onclick="manualBackup()">💾 Sauvegarder maintenant</button>
+      </div>
+      <input type="file" id="zip-input" accept=".zip,application/zip" multiple style="display:none" onchange="importZipFiles(this.files)">
+    </div>`;
+}
+
+async function askBluetooth() {
+  try { await Native.plugin.requestBluetooth(); bondedDevices = null; }
+  catch { showToast('Permission refusée — à activer dans les réglages Android', 'error'); }
+  loadSettings();
+  refreshScannerPill();
+}
+
+async function askNotifications() {
+  await Native.plugin.requestNotifications().catch(() => {});
+  loadSettings();
+}
+
+async function chooseScanner(address, name) {
+  await Native.plugin.setTarget({ address, name });
+  showToast(`Douchette : ${name} ✓`, 'success');
+  loadSettings();
+  refreshScannerPill();
+}
+
+async function setWatch(on) {
+  await Native.plugin.setWatchEnabled({ enabled: on });
+  setTimeout(loadSettings, 500);
+}
+
+async function manualBackup() {
+  try {
+    const name = await Store.backupNow();
+    showToast(`Sauvegardé : ${name} ✓`, 'success');
+  } catch (e) {
+    showToast('Sauvegarde impossible', 'error');
+    console.error(e);
+  }
+  loadSettings();
+}
+
+async function importZipFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  try {
+    const found = await Store.parseZips(files);
+    const s = Store.summarize(found);
+    if (!s.produits && !s.chambreFroide && !s.congelateur && !s.jours) {
+      showToast('Aucune donnée reconnue dans ce ZIP', 'error');
+      return;
+    }
+    const ok = confirm(`Importer ?\n\n• ${s.produits} produits\n• ${s.chambreFroide} lots en chambre froide\n• ${s.congelateur} produits au congélateur\n• ${s.liaisons} liaisons de codes\n• ${s.jours} jours d'historique (${s.scans} scans)\n\nLes produits, la chambre froide et le congélateur de la tablette seront REMPLACÉS par ceux du ZIP. L'historique est fusionné.`);
+    if (!ok) return;
+    await Store.applyImport(found);
+    showToast('Import terminé ✓', 'success');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    console.error(e);
+    showToast('ZIP illisible', 'error');
+  } finally {
+    document.getElementById('zip-input').value = '';
+  }
+}
+
+// ═══════════════════════════════════════
+// UI
+// ═══════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === `page-${tab}`));
+  document.activeElement?.blur();
+  if (tab === 'history') loadHistory();
+  if (tab === 'labels') loadLabels();
+  if (tab === 'freezer') loadFreezer();
+  if (tab === 'settings') loadSettings();
+  if (tab === 'scan') renderRecent();
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 2500);
+}
+
+// ═══════════════════════════════════════
+// DÉMARRAGE
+// ═══════════════════════════════════════
+window.addEventListener('load', async () => {
+  produitsDict = (await Store.load('produits.json')) || {};
+  ScanCapture.start(onBarcode);
+  renderModeContext();
+  renderRecent();
+
+  // Arrivée depuis une autre page : scan à traiter, ou réglages demandés
+  const hash = decodeURIComponent(location.hash.slice(1));
+  history.replaceState(null, '', location.pathname);
+  if (hash.startsWith('scan=')) { queueScan(hash.slice(5)); }
+  else if (hash === 'reglages') { switchTab('settings'); }
+  else {
+    // Première ouverture sur la tablette : on commence par les réglages
+    const s = await Native.status().catch(() => null);
+    if (s && (!s.targetAddress || !Object.keys(produitsDict).length)) switchTab('settings');
+  }
+
+  Store.cleanOldDays().catch(console.error);
+  Store.autoBackupIfNeeded();
+  // L'app reste ouverte des jours entiers : on vérifie la sauvegarde toutes les heures
+  setInterval(() => Store.autoBackupIfNeeded(), 3600 * 1000);
+});
+
+// Retour au premier plan (douchette connectée, ou retour depuis les réglages Android)
+Native.onResume(() => {
+  if (document.querySelector('.tab.active')?.dataset.tab === 'settings') loadSettings();
+  else renderRecent();
+});
+Native.onScannerConnected(() => {
+  const tab = document.querySelector('.tab.active')?.dataset.tab;
+  if (tab !== 'freezer' && tab !== 'scan') switchTab('scan');
+  showToast('📡 Douchette connectée — prêt', 'success');
+});

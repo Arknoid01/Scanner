@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a1628">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Articles — Boucherie Amiot</title>
+<style>
+  :root {
+    --bg:       #0a1628;
+    --surface:  #0f1e35;
+    --surface2: #162540;
+    --border:   #1e3355;
+    --blue:     #2563eb;
+    --blue-dim: #1e3a6e;
+    --ice:      #7dd3fc;
+    --ice-dim:  #38607a;
+    --text:     #e2eaf4;
+    --text-dim: #6b8aaa;
+    --green:    #22c55e;
+    --yellow:   #f59e0b;
+    --red:      #ef4444;
+    --purple:   #a78bfa;
+    --font:     'Space Grotesk', sans-serif;
+    --mono:     'Space Mono', monospace;
+    --radius:   12px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: radial-gradient(ellipse at 30% 20%, rgba(37,99,235,.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, rgba(125,211,252,.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .back-btn { color: var(--text-dim); text-decoration: none; font-size: 18px; line-height: 1; transition: color .2s; }
+  .back-btn:hover { color: var(--ice); }
+  .logo { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+  .logo span { color: var(--ice); }
+
+  #btn-auth {
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity .2s;
+  }
+  #btn-auth:hover { opacity: .85; }
+  #btn-auth.connected { background: var(--surface2); border: 1px solid var(--border); color: var(--green); }
+
+  main {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: relative;
+    z-index: 1;
+    max-width: 720px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* ─── BARRE OUTILS ─── */
+  .toolbar {
+    display: flex;
+    gap: 10px;
+  }
+  .search-box {
+    flex: 1;
+    position: relative;
+  }
+  .search-box input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 11px 14px 11px 38px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .search-box input:focus { border-color: var(--ice); }
+  .search-box input::placeholder { color: var(--text-dim); }
+  .search-icon { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--text-dim); font-size: 14px; }
+
+  .filter-chips {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .chip {
+    flex-shrink: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 6px 13px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all .2s;
+    white-space: nowrap;
+  }
+  .chip.active { background: var(--blue-dim); border-color: var(--ice-dim); color: var(--ice); }
+
+  .stats-bar {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ─── LISTE ARTICLES ─── */
+  .article-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .article-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 16px;
+    cursor: pointer;
+    transition: border-color .2s;
+  }
+  .article-card:hover { border-color: var(--ice-dim); }
+  .article-card.linked { border-left: 3px solid var(--purple); }
+
+  .article-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .article-name { font-size: 15px; font-weight: 600; }
+  .article-source {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .source-manuel { background: rgba(125,211,252,.15); color: var(--ice); }
+  .source-facture { background: rgba(34,197,94,.15); color: var(--green); }
+  .source-etiquette { background: rgba(245,158,11,.15); color: var(--yellow); }
+
+  .article-codes {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .code-tag {
+    background: var(--surface2);
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+  .code-tag.empty { color: var(--red); font-style: italic; font-family: var(--font); }
+
+  .linked-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--purple);
+    margin-top: 6px;
+    font-weight: 600;
+  }
+
+  .empty-state { text-align: center; padding: 50px 20px; }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; color: var(--text-dim); }
+
+  .loading { text-align: center; padding: 40px; color: var(--text-dim); font-size: 14px; }
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--ice);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── MODAL ÉDITION ─── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 1000;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal-sheet {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    padding: 22px 20px 28px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 88vh;
+    overflow-y: auto;
+    animation: slideUp .25s ease-out;
+  }
+  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .modal-handle {
+    width: 36px; height: 4px;
+    background: var(--border);
+    border-radius: 100px;
+    margin: 0 auto 18px;
+  }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .modal-subtitle { font-size: 12px; color: var(--text-dim); margin-bottom: 18px; }
+
+  .field-group { margin-bottom: 14px; }
+  .field-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .field-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 13px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .field-input:focus { border-color: var(--ice); }
+  .field-input.mono { font-family: var(--mono); font-size: 13px; }
+
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .btn-modal-primary {
+    flex: 1;
+    padding: 13px;
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .btn-modal-secondary {
+    padding: 13px 18px;
+    background: none;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .btn-modal-danger {
+    padding: 13px 18px;
+    background: rgba(239,68,68,.1);
+    color: var(--red);
+    border: 1px solid rgba(239,68,68,.3);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+
+  .section-divider {
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+    padding-top: 18px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ice);
+    margin-bottom: 4px;
+  }
+  .section-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  .linked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .linked-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(167,139,250,.08);
+    border: 1px solid rgba(167,139,250,.25);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .linked-item-name { font-size: 13px; font-weight: 600; color: var(--purple); }
+  .linked-item-code { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+  .btn-unlink {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .btn-unlink:hover { color: var(--red); }
+
+  .link-search-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .link-autocomplete {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+  .link-autocomplete input { width: 100%; }
+  .link-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 200;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .link-dropdown.open { display: block; }
+  .link-dropdown-item {
+    padding: 9px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  .link-dropdown-item:last-child { border-bottom: none; }
+  .link-dropdown-item:hover, .link-dropdown-item.selected {
+    background: rgba(167,139,250,.15);
+  }
+  .link-dropdown-item .item-code {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .link-selected-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(167,139,250,.15);
+    border: 1px solid rgba(167,139,250,.4);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 12px;
+    color: var(--purple);
+    margin-top: 4px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .btn-link-add {
+    background: var(--blue-dim);
+    color: var(--ice);
+    border: 1px solid var(--ice-dim);
+    border-radius: 8px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    white-space: nowrap;
+  }
+
+  .btn-merge-add {
+    background: rgba(167,139,250,.12);
+    color: var(--purple);
+    border: 1px solid rgba(167,139,250,.4);
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    white-space: nowrap;
+  }
+
+  .merge-preview-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .merge-preview-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .merge-preview-row:last-child { border-bottom: none; }
+  .merge-preview-label {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    flex-shrink: 0;
+    width: 90px;
+  }
+  .merge-preview-values {
+    flex: 1;
+    text-align: right;
+  }
+  .merge-preview-old {
+    color: var(--text-dim);
+    text-decoration: line-through;
+    font-size: 12px;
+    margin-right: 6px;
+  }
+  .merge-preview-new {
+    color: var(--green);
+    font-weight: 700;
+  }
+  .merge-preview-same {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .merge-warning {
+    background: rgba(245,158,11,.1);
+    border: 1px solid rgba(245,158,11,.3);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--yellow);
+    margin-bottom: 14px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 20px;
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+    z-index: 1100;
+    white-space: nowrap;
+    font-family: var(--font);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--green); color: var(--green); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+</style>
+</style>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a class="back-btn" href="index.html">←</a>
+    <div class="logo">Gestion <span>Articles</span></div>
+  </div>
+  <button id="scanner-pill" class="scanner-pill" onclick="location.href='index.html#reglages'">📡 Douchette ?</button>
+</header>
+
+<main>
+  <div class="toolbar">
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Rechercher un article, ou scanne son code…" oninput="renderList()">
+    </div>
+  </div>
+
+  <div class="filter-chips">
+    <div class="chip active" data-filter="all" onclick="setFilter('all')">Tous</div>
+    <div class="chip" data-filter="manuel" onclick="setFilter('manuel')">📡 Scan</div>
+    <div class="chip" data-filter="facture" onclick="setFilter('facture')">📄 Facture</div>
+    <div class="chip" data-filter="etiquette" onclick="setFilter('etiquette')">🏷️ Étiquette</div>
+    <div class="chip" data-filter="sanscode" onclick="setFilter('sanscode')">⚠️ Sans code</div>
+  </div>
+
+  <div class="stats-bar" id="stats-bar"></div>
+
+  <div id="article-list-content">
+    <div class="empty-state">
+      <div class="empty-icon">🔒</div>
+      <div class="empty-text">Chargement…</div>
+    </div>
+  </div>
+</main>
+
+<!-- ═══ MODAL ÉDITION ═══ -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modal-title">Modifier l'article</div>
+    <div class="modal-subtitle" id="modal-subtitle"></div>
+
+    <div class="field-group">
+      <label class="field-label">Nom du produit</label>
+      <input type="text" class="field-input" id="edit-nom">
+    </div>
+
+    <div class="field-row">
+      <div class="field-group">
+        <label class="field-label">Code facture</label>
+        <input type="text" class="field-input mono" id="edit-code-facture" placeholder="—">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Code physique</label>
+        <input type="text" class="field-input mono" id="edit-code-physique" placeholder="Aucun">
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-primary" onclick="saveArticleEdit()">✓ Enregistrer</button>
+      <button class="btn-modal-secondary" onclick="closeEditModal()">Annuler</button>
+    </div>
+
+    <div class="section-divider">
+      <div class="section-title">🔗 Articles liés</div>
+      <div class="section-desc">Fusionne deux entrées qui désignent en fait le même produit (ex : un code créé manuellement et un code de facture).</div>
+
+      <div class="linked-list" id="linked-list"></div>
+
+      <div class="link-search-row">
+        <div class="link-autocomplete" id="link-autocomplete">
+          <input type="text" class="field-input" id="link-search-input"
+                 placeholder="🔍 Chercher un article à lier…"
+                 autocomplete="off"
+                 oninput="filterLinkSearch(this.value)"
+                 onfocus="showLinkDropdown()"
+                 onblur="hideLinkDropdown()">
+          <div class="link-dropdown" id="link-dropdown"></div>
+        </div>
+        <button class="btn-link-add" onclick="addLink()">Lier</button>
+        <button class="btn-merge-add" onclick="openMergeConfirm()">🔀 Fusionner</button>
+      </div>
+    </div>
+
+    <div class="section-divider">
+      <button class="btn-modal-danger" style="width:100%;" onclick="deleteArticle()">🗑️ Supprimer cet article</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ POPUP CONFIRMATION FUSION ═══ -->
+<div class="modal-overlay" id="merge-confirm-modal">
+  <div class="modal-sheet" style="max-width:480px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🔀 Confirmer la fusion</div>
+    <div class="modal-subtitle">Ces deux articles vont devenir une seule entrée. Action irréversible.</div>
+
+    <div id="merge-preview"></div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-primary" style="background:var(--purple);" onclick="confirmMerge()">✓ Fusionner</button>
+      <button class="btn-modal-secondary" onclick="closeMergeConfirm()">Annuler</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="vendor/capacitor.js"></script>
+<script src="js/store.js"></script>
+<script src="js/common.js"></script>
+<script src="js/articles.js"></script>
+</body>
+</html>

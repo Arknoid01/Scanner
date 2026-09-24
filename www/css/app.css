@@ -1,0 +1,143 @@
+/* ═══ Composants communs de l'app tablette ═══ */
+
+/* Cibles tactiles confortables sur tablette */
+button, .tab, .header-link { touch-action: manipulation; }
+
+/* ── Pastille douchette ── */
+.scanner-pill {
+  font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid #2e2e4a; background: #22223b; color: #9090a8; white-space: nowrap;
+  cursor: pointer; font-family: inherit;
+}
+.scanner-pill.on { color: #2dc653; border-color: rgba(45,198,83,.5); background: rgba(45,198,83,.1); }
+.scanner-pill.off { color: #f59e0b; border-color: rgba(245,158,11,.5); background: rgba(245,158,11,.1); }
+.scanner-pill.warn { color: #ff6b6b; border-color: rgba(230,57,70,.5); background: rgba(230,57,70,.1); }
+
+/* ── Sélecteur de modes (gros boutons) ── */
+.mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 560px) { .mode-grid { grid-template-columns: repeat(2, 1fr); } }
+.mode-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 84px; padding: 10px 6px; border-radius: 14px; cursor: pointer;
+  background: var(--surface, #1a1a2e); border: 2px solid var(--border, #2e2e4a);
+  color: var(--text-dim, #9090a8); font-family: inherit; font-size: 14px; font-weight: 700;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.mode-btn .mode-icon { font-size: 28px; line-height: 1; }
+.mode-btn .mode-sub { font-size: 11px; font-weight: 500; opacity: .8; }
+.mode-btn.active { color: #fff; }
+.mode-btn[data-mode="sortie"].active { background: rgba(37,99,235,.25); border-color: #3b82f6; }
+.mode-btn[data-mode="viande"].active { background: rgba(230,57,70,.22); border-color: #e63946; }
+.mode-btn[data-mode="dlc"].active { background: rgba(45,198,83,.18); border-color: #2dc653; }
+.mode-btn[data-mode="partiel"].active { background: rgba(245,158,11,.2); border-color: #f59e0b; }
+
+.mode-context {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 12px; background: var(--surface2, #22223b);
+  border: 1px solid var(--border, #2e2e4a); font-size: 14px;
+}
+.mode-context:empty { display: none; }
+.mode-context button {
+  background: var(--surface, #1a1a2e); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+  border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+
+/* ── Zone « prêt à scanner » ── */
+.ready-zone {
+  display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center;
+  padding: 22px 16px; border-radius: 14px; border: 2px dashed var(--border, #2e2e4a);
+  color: var(--text-dim, #9090a8); font-size: 16px; font-weight: 600;
+}
+.ready-zone .ready-dot { width: 12px; height: 12px; border-radius: 50%; background: #2dc653; box-shadow: 0 0 0 0 rgba(45,198,83,.6); animation: pulse 1.8s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(45,198,83,.6); } 70% { box-shadow: 0 0 0 12px rgba(45,198,83,0); } 100% { box-shadow: 0 0 0 0 rgba(45,198,83,0); } }
+.ready-zone.flash { border-color: #2dc653; color: #2dc653; }
+
+/* ── Bouton annuler (après un enregistrement automatique) ── */
+.undo-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.btn-undo {
+  background: transparent; color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+  border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.undo-timer { flex: 1; height: 4px; border-radius: 2px; background: var(--border, #2e2e4a); overflow: hidden; }
+.undo-timer > div { height: 100%; background: var(--text-dim, #9090a8); animation: undo-shrink linear forwards; }
+@keyframes undo-shrink { from { width: 100%; } to { width: 0; } }
+
+/* ── Derniers scans du jour ── */
+.recent-list { display: flex; flex-direction: column; gap: 6px; }
+.recent-title { font-size: 12px; font-weight: 700; color: var(--text-dim, #9090a8); text-transform: uppercase; letter-spacing: .5px; }
+.recent-item {
+  display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface, #1a1a2e); border: 1px solid var(--border, #2e2e4a); font-size: 14px;
+}
+.recent-item .recent-time { color: var(--text-dim, #9090a8); font-variant-numeric: tabular-nums; }
+
+/* ── Sélecteur de DLC ── */
+.dlc-picker-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.dlc-picker {
+  width: 100%; max-width: 520px; background: #1a1a2e; color: #f0ece4; border: 1px solid #2e2e4a;
+  border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.dlc-picker-title { font-size: 18px; font-weight: 700; }
+.dlc-picker-sub { font-size: 14px; color: #9090a8; margin-top: -6px; }
+.dlc-picker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.dlc-quick {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 6px; border-radius: 12px;
+  background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; cursor: pointer; font-family: inherit;
+}
+.dlc-quick strong { font-size: 18px; }
+.dlc-quick span { font-size: 12px; color: #9090a8; }
+.dlc-quick:active { background: #2dc653; color: #0f0f1a; }
+.dlc-picker-row { display: flex; gap: 10px; }
+.dlc-date-input {
+  flex: 1; min-width: 0; background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 12px; font-size: 16px; font-family: inherit; color-scheme: dark;
+}
+.dlc-ok, .dlc-cancel {
+  border-radius: 10px; padding: 12px 18px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+.dlc-ok { background: #2dc653; color: #0f0f1a; border: none; }
+.dlc-cancel { background: transparent; color: #9090a8; border: 1px solid #2e2e4a; }
+
+/* ── Réglages ── */
+.settings-card {
+  background: var(--surface, #1a1a2e); border: 1px solid var(--border, #2e2e4a); border-radius: 14px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.settings-card h3 { font-size: 16px; }
+.settings-desc { font-size: 13px; color: var(--text-dim, #9090a8); line-height: 1.45; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-row .settings-label { font-size: 14px; }
+.settings-row .settings-label small { display: block; color: var(--text-dim, #9090a8); font-size: 12px; margin-top: 2px; }
+.status-ok { color: #2dc653; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.status-ko { color: #f59e0b; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.btn-action {
+  background: var(--accent, #e63946); color: #fff; border: none; border-radius: 10px; padding: 11px 16px;
+  font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.btn-action.secondary { background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a); }
+.device-list { display: flex; flex-direction: column; gap: 8px; }
+.device-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px;
+  border-radius: 10px; background: var(--surface2, #22223b); border: 1px solid var(--border, #2e2e4a); cursor: pointer;
+}
+.device-item.selected { border-color: #2dc653; background: rgba(45,198,83,.1); }
+.device-item small { color: var(--text-dim, #9090a8); font-family: monospace; }
+.switch { position: relative; width: 52px; height: 30px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; border-radius: 15px; background: #2e2e4a; transition: .2s; cursor: pointer; }
+.switch span::before { content: ''; position: absolute; width: 24px; height: 24px; left: 3px; top: 3px; border-radius: 50%; background: #f0ece4; transition: .2s; }
+.switch input:checked + span { background: #2dc653; }
+.switch input:checked + span::before { transform: translateX(22px); }
+
+/* ── Tailles tablette (page Scanner) ── */
+.tab { font-size: 15px; padding: 16px 10px; }
+.header-link { font-size: 14px; padding: 10px 14px; }
+.result-name { font-size: 22px; }
+.btn-save { font-size: 16px; padding: 14px; }
+.name-input { font-size: 17px; }
+.page { max-width: 1000px; width: 100%; margin: 0 auto; }
+#settings-content { display: flex; flex-direction: column; gap: 16px; }
+@media print { body { background: #fff !important; color: #000 !important; } }
