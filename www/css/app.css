@@ -237,3 +237,24 @@ button, .tab, .header-link { touch-action: manipulation; }
 /* Fiche de correction d'un lot (page Chambre froide) */
 .lot-edit-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 16px; }
 .lot-edit-row .dlc-ok { padding: 10px 16px; }
+
+/* ── Produit inconnu : articles existants proposés (nouveau code-barres) ── */
+.alias-box { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(37,99,235,.08); border: 1px solid var(--border, #2e2e4a); }
+.alias-title { font-size: 13px; color: var(--text-dim, #9090a8); margin-bottom: 8px; }
+.alias-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; max-height: 300px; overflow-y: auto; }
+.alias-btn {
+  min-height: 52px; padding: 8px 10px; border-radius: 10px; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+  font-family: inherit; background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.alias-btn.in-cf { border-color: rgba(125,211,252,.5); }
+.alias-empty { font-size: 13px; color: var(--text-dim, #9090a8); }
+
+.alias-search {
+  width: 100%; margin-bottom: 10px; padding: 12px; border-radius: 10px; font-size: 16px; font-family: inherit;
+  background: var(--surface, #1a1a2e); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.alias-section { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim, #9090a8); margin: 10px 0 6px; }
+.alias-section:first-child { margin-top: 0; }
+#cf-link-area { max-height: 360px; overflow-y: auto; }
+#cf-link-area .alias-list { max-height: none; overflow: visible; }
+.alias-btn.no-code { border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.1); }

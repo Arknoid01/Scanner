@@ -49,6 +49,107 @@ async function loadCfMapping() {
 }
 async function saveCfMapping(mapping) { cfMappingCache = mapping; await Store.save('cf-mapping.json', mapping); }
 
+// ═══════════════════════════════════════
+// ARTICLES À PLUSIEURS CODES-BARRES
+// ═══════════════════════════════════════
+// Certains produits changent de code-barres d'une livraison à l'autre. Un article est donc reconnu
+// par son NOM : chaque nouveau code est ajouté dans produits.json avec le même nom (un « alias »).
+const normName = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+const nomOf = v => typeof v === 'object' && v ? (v.nom || '') : String(v ?? '');
+const nameOfCode = code => nomOf(produitsDict[code]) || null;
+
+// Le lot appartient-il à l'article de ce code (par un de ses codes, ou par le nom) ?
+function lotMatchesCode(lot, code, mapping = cfMappingCache || {}) {
+  if (lot.codePhysique === code || lot.codeFacture === code || (mapping[code] && lot.codeFacture === mapping[code])) return true;
+  const nom = nameOfCode(code);
+  return !!nom && normName(lot.nom) === normName(nom);
+}
+
+// Articles déjà connus (noms uniques), par ordre alphabétique.
+// noCode : article de la chambre froide qui n'a encore aucun code-barres (import JSON, ajout à la main…)
+function knownArticles() {
+  const mapping = cfMappingCache || {};
+  const withCode = new Set(Object.values(produitsDict).map(v => normName(nomOf(v))));
+  const map = new Map();
+  for (const s of cfStock || []) {
+    if (!s.nom) continue;
+    const k = normName(s.nom);
+    const lotHasCode = !!(s.codePhysique || (s.codeFacture && mapping[s.codeFacture]));
+    const cur = map.get(k);
+    if (cur) { cur.noCode = cur.noCode && !lotHasCode; continue; }
+    map.set(k, { nom: s.nom, inCf: true, noCode: !lotHasCode && !withCode.has(k) });
+  }
+  for (const v of Object.values(produitsDict)) {
+    const n = nomOf(v);
+    if (n && !map.has(normName(n))) map.set(normName(n), { nom: n, inCf: false, noCode: false });
+  }
+  return [...map.values()].sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+}
+
+// Nom tapé à la main : s'il existe déjà (à la casse / aux accents près), on reprend l'orthographe existante
+function canonicalName(nom) {
+  const hit = knownArticles().find(a => normName(a.nom) === normName(nom));
+  return hit ? hit.nom : nom.trim();
+}
+
+// Rattache un nouveau code à un article existant (ou crée l'article)
+async function addCodeToArticle(code, nom) {
+  produitsDict[code] = canonicalName(nom);
+  await saveProduitsJson();
+  return produitsDict[code];
+}
+
+// ── Suggestions sous le champ « nom » d'un produit inconnu ──
+// aliasCtx.onPick(nom) est appelé une fois le code rattaché à l'article choisi.
+let aliasCtx = null;
+
+function aliasBoxHtml(code, inputId, placeholder, onEnter) {
+  return `
+    <input class="name-input" id="${inputId}" type="text" placeholder="${placeholder}" autocomplete="off"
+           onkeydown="if(event.key==='Enter') ${onEnter}">
+    ${aliasPanelHtml()}`;
+}
+
+function aliasPanelHtml() {
+  return `<div class="alias-box">
+      <div class="alias-title">🔗 Ou c'est un article existant ? Appuie dessus, ce code-barres lui sera ajouté :</div>
+      <input class="alias-search" id="alias-search" type="text" placeholder="🔍 Chercher un article…" autocomplete="off"
+             oninput="renderAliasList(this.value)">
+      <div id="cf-link-area"></div>
+    </div>`;
+}
+
+async function startAliasPicker(code, onPick) {
+  aliasCtx = { code, onPick };
+  await loadCfMapping();
+  renderAliasList('');
+}
+
+function renderAliasList(q) {
+  const el = document.getElementById('cf-link-area');
+  if (!el || !aliasCtx) return;
+  const nq = normName(q);
+  const list = knownArticles().filter(a => !nq || normName(a.nom).includes(nq));
+  const noCode = list.filter(a => a.noCode);
+  const others = list.filter(a => !a.noCode);
+  const btns = arr => arr.map(a => `<button class="alias-btn ${a.noCode ? 'no-code' : ''}" onclick="pickAlias(${jsArg(a.nom)})">${a.inCf ? '🧊 ' : ''}${esc(a.nom)}</button>`).join('');
+  el.innerHTML = !list.length
+    ? '<div class="alias-empty">Aucun article ne correspond — tape son nom dans le champ au-dessus puis ✓ pour le créer.</div>'
+    : `${noCode.length ? `<div class="alias-section">⚠️ Sans code-barres (${noCode.length})</div><div class="alias-list">${btns(noCode)}</div>` : ''}
+       ${others.length ? `<div class="alias-section">Autres articles (${others.length})</div><div class="alias-list">${btns(others.slice(0, 60))}</div>` : ''}
+       ${others.length > 60 ? `<div class="alias-empty">… ${others.length - 60} autres : utilise la recherche.</div>` : ''}`;
+}
+
+async function pickAlias(nom) {
+  const ctx = aliasCtx;
+  if (!ctx) return;
+  aliasCtx = null;
+  document.activeElement?.blur();
+  const n = await addCodeToArticle(ctx.code, nom);
+  showToast(`Code ajouté à « ${n} » ✓`, 'success');
+  await ctx.onPick(n);
+}
+
 function newCfId() { return 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6); }
 
 // ═══════════════════════════════════════
@@ -149,7 +250,7 @@ async function checkCfMatch(code) {
   const codeFacture = mapping[code] || code;
   // Plusieurs lots : on prend la DLC la plus proche (premier entré, premier sorti)
   const candidats = stock
-    .filter(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture)
+    .filter(s => s.codePhysique === code || s.codeFacture === code || s.codeFacture === codeFacture || lotMatchesCode(s, code, mapping))
     .sort((a, b) => (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
   return candidats[0] || null;
 }
@@ -222,51 +323,37 @@ async function recordExit(code, nom, cfItem, partial, { kind = 'sortie', qty = 1
 // Produit inconnu : on demande juste son nom (ou on le relie à un article de la chambre froide)
 async function showUnknownForExit(code) {
   currentScan = { code, nom: null };
+  await loadCfStock();
   showResult(code, 'unknown', `
     <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
-    <input class="name-input" id="name-input" type="text" placeholder="Ex : Gratin Dauphinois"
-           onkeydown="if(event.key==='Enter') confirmUnknownExit(${jsArg(code)})">
-    <button class="btn-save" style="margin-top:10px;" onclick="confirmUnknownExit(${jsArg(code)})">✓ Enregistrer</button>
-    <div id="cf-link-area"></div>`);
-  setTimeout(() => document.getElementById('name-input')?.focus(), 100);
-
-  // Articles de la chambre froide encore sans code-barres : un appui suffit pour les relier
-  const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
-  const sansCode = stock.filter(item => !item.codePhysique && !mapping[item.codeFacture]);
-  const area = document.getElementById('cf-link-area');
-  if (!area || !sansCode.length) return;
-  area.innerHTML = `
-    <div style="margin-top:12px;padding:10px 12px;background:rgba(37,99,235,.08);border:1px solid var(--border);border-radius:8px;">
-      <div style="font-size:13px;color:var(--text-dim);margin-bottom:8px;">🧊 Ou c'est un de ces articles de la chambre froide ? Appuie dessus :</div>
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        ${sansCode.map(item => `<button class="btn-edit" style="text-align:left;padding:10px 12px;font-size:14px;"
-            onclick="linkAndExit(${jsArg(code)}, ${jsArg(item.id)})">${esc(item.nom)} <span style="color:var(--text-dim);font-size:12px;">· DLC ${formatDlcDisplay(item.dlc)}</span></button>`).join('')}
-      </div>
-    </div>`;
+    ${aliasBoxHtml(code, 'name-input', 'Ex : Gratin Dauphinois', `confirmUnknownExit(${jsArg(code)})`)}
+    <button class="btn-save" style="margin-top:10px;" onclick="confirmUnknownExit(${jsArg(code)})">✓ Enregistrer</button>`);
+  startAliasPicker(code, nom => exitWithArticle(code, nom));
 }
 
 async function confirmUnknownExit(code) {
   const nom = document.getElementById('name-input')?.value.trim();
   if (!nom) { showToast('Entre un nom', 'error'); return; }
-  produitsDict[code] = nom;
-  await saveProduitsJson();
-  await recordExit(code, nom, null, mode === 'partiel');
+  aliasCtx = null;
+  await exitWithArticle(code, await addCodeToArticle(code, nom));
 }
 
-// Relie le code scanné à un article de la chambre froide, puis enregistre la sortie
-async function linkAndExit(code, itemId) {
+// Le code est maintenant rattaché à l'article : sortie du lot correspondant s'il y en a un en chambre froide
+async function exitWithArticle(code, nom) {
+  await linkLotsWithoutCode(code, nom);
+  await recordExit(code, nom, await checkCfMatch(code), mode === 'partiel');
+}
+
+// Les lots de cet article encore sans code-barres reçoivent celui-ci (et la liaison avec leur code facture)
+async function linkLotsWithoutCode(code, nom) {
   const [stock, mapping] = await Promise.all([loadCfStock(), loadCfMapping()]);
-  const item = stock.find(s => s.id === itemId);
-  if (!item) return;
-  if (item.codeFacture) {
-    mapping[code] = item.codeFacture;
-    mapping[item.codeFacture] = code;
+  const lots = stock.filter(s => !s.codePhysique && normName(s.nom) === normName(nom));
+  if (!lots.length) return;
+  for (const item of lots) {
+    item.codePhysique = code;
+    if (item.codeFacture && !mapping[item.codeFacture]) { mapping[code] = item.codeFacture; mapping[item.codeFacture] = code; }
   }
-  item.codePhysique = code;
   await Promise.all([saveCfMapping(mapping), saveCfStock()]);
-  if (!produitsDict[code]) { produitsDict[code] = item.nom; await saveProduitsJson(); }
-  showToast(`Lié à « ${item.nom} » ✓`, 'success');
-  await recordExit(code, item.nom, item, mode === 'partiel');
 }
 
 function editScanName() {
@@ -328,7 +415,7 @@ async function undoLast() {
 // ═══════════════════════════════════════
 async function handleMeatScan(code) {
   const stock = await loadCfStock();
-  const item = stock.find(s => s.codePhysique === code && s.dlc === meatModeDlc);
+  const item = stock.find(s => s.dlc === meatModeDlc && lotMatchesCode(s, code));
   if (item) {
     item.qty++;
     await saveCfStock();
@@ -336,14 +423,13 @@ async function handleMeatScan(code) {
       <div class="result-name">${esc(item.nom)}</div>
       ${badge(...BADGE_BLUE, `🥩 +1 — total : ${item.qty} en stock (DLC ${formatDlcDisplay(item.dlc)})`)}`);
   } else if (produitsDict[code]) {
-    await addMeatItem(code, produitsDict[code]);
+    await addMeatItem(code, nameOfCode(code));
   } else {
     showResult(code, 'unknown', `
       <div class="result-name unknown-label">Nouveau morceau — donne-lui un nom :</div>
-      <input class="name-input" id="meat-name-input" type="text" placeholder="Ex : Flanchet avec os"
-             onkeydown="if(event.key==='Enter') confirmMeatName(${jsArg(code)})">
+      ${aliasBoxHtml(code, 'meat-name-input', 'Ex : Flanchet avec os', `confirmMeatName(${jsArg(code)})`)}
       <button class="btn-save" style="margin-top:10px;" onclick="confirmMeatName(${jsArg(code)})">✓ Créer l'article</button>`);
-    setTimeout(() => document.getElementById('meat-name-input')?.focus(), 100);
+    startAliasPicker(code, () => handleMeatScan(code));
   }
 }
 
@@ -363,25 +449,26 @@ async function addMeatItem(code, nom) {
 async function confirmMeatName(code) {
   const nom = document.getElementById('meat-name-input')?.value.trim();
   if (!nom) { showToast('Entre un nom', 'error'); return; }
-  if (!produitsDict[code]) { produitsDict[code] = nom; await saveProduitsJson(); }
+  aliasCtx = null;
+  if (!produitsDict[code]) await addCodeToArticle(code, nom);
   document.activeElement?.blur();
-  await addMeatItem(code, nom);
+  await handleMeatScan(code); // nom déjà connu : regroupé avec le lot existant de même DLC
 }
 
 // ═══════════════════════════════════════
 // MODE DLC — la DLC est choisie à chaque scan
 // ═══════════════════════════════════════
 async function handleDlcModeScan(code) {
-  const nom = produitsDict[code] || null;
-  const dlc = await pickDlc('DLC du produit', nom || `Code ${code}`);
+  const nom = nameOfCode(code);
+  const dlc = await pickDlc('DLC du produit', esc(nom || `Code ${code}`));
   if (!dlc) { hideResult(); return; }
   if (!nom) {
+    await loadCfStock();
     showResult(code, 'unknown', `
       <div class="result-name unknown-label">Produit inconnu — donne-lui un nom :</div>
-      <input class="name-input" id="dlc-name-input" type="text" placeholder="Ex : Saucisson sec"
-             onkeydown="if(event.key==='Enter') confirmDlcModeName(${jsArg(code)}, ${jsArg(dlc)})">
+      ${aliasBoxHtml(code, 'dlc-name-input', 'Ex : Saucisson sec', `confirmDlcModeName(${jsArg(code)}, ${jsArg(dlc)})`)}
       <button class="btn-save" style="margin-top:10px;" onclick="confirmDlcModeName(${jsArg(code)}, ${jsArg(dlc)})">✓ Ranger en chambre froide</button>`);
-    setTimeout(() => document.getElementById('dlc-name-input')?.focus(), 100);
+    startAliasPicker(code, n => addToColdStorageWithDlc(code, n, dlc));
     return;
   }
   await addToColdStorageWithDlc(code, nom, dlc);
@@ -390,16 +477,17 @@ async function handleDlcModeScan(code) {
 async function confirmDlcModeName(code, dlc) {
   const nom = document.getElementById('dlc-name-input')?.value.trim();
   if (!nom) { showToast('Entre un nom', 'error'); return; }
-  if (!produitsDict[code]) { produitsDict[code] = nom; await saveProduitsJson(); }
+  aliasCtx = null;
+  const n = produitsDict[code] ? nameOfCode(code) : await addCodeToArticle(code, nom);
   document.activeElement?.blur();
-  await addToColdStorageWithDlc(code, nom, dlc);
+  await addToColdStorageWithDlc(code, n, dlc);
 }
 
 async function addToColdStorageWithDlc(code, nom, dlc, qty = 1, extraHtml = '') {
   const stock = await loadCfStock();
   const dateEntree = localDateStr(new Date());
   // Même code, même DLC, entré le même jour : on regroupe dans le même lot
-  let item = stock.find(s => (s.codePhysique === code || s.codeFacture === code) && s.dlc === dlc && s.dateEntree === dateEntree);
+  let item = stock.find(s => s.dlc === dlc && s.dateEntree === dateEntree && lotMatchesCode(s, code));
   if (item) item.qty += qty;
   else {
     item = { id: newCfId(), nom, dlc, qty, supplier: 'Saisie manuelle',
@@ -586,7 +674,6 @@ let cfAdd = null;            // { code, nom, isNew, dlc, qty } une fois l'articl
 let cfAddPendingCode = null; // code scanné inconnu : sera le code de l'article créé
 
 const cfAddOpen = () => document.getElementById('cf-add-modal')?.style.display === 'flex';
-const nomOf = v => typeof v === 'object' && v ? (v.nom || '') : String(v ?? '');
 
 function openCfAdd() {
   cfAdd = null;
@@ -671,7 +758,7 @@ function cfAddScan(code) {
   if (cfAdd) { showToast("Termine d'abord cet article", 'error'); return; }
   if (produitsDict[code]) { cfAddChoose(code); return; }
   cfAddPendingCode = code;
-  document.getElementById('cf-add-hint').innerHTML = `📡 Code <strong>${esc(code)}</strong> inconnu — tape son nom puis « Créer ».`;
+  document.getElementById('cf-add-hint').innerHTML = `📡 Code <strong>${esc(code)}</strong> inconnu — appuie sur l'article s'il existe déjà (le code lui sera ajouté), sinon tape son nom puis « Créer ».`;
   document.getElementById('cf-add-search').focus();
   renderCfAddList();
 }
@@ -680,14 +767,21 @@ async function cfAddCreate() {
   const nom = document.getElementById('cf-add-search').value.trim();
   if (!nom) { showToast('Entre un nom', 'error'); return; }
   const code = cfAddPendingCode || generateCode(nom);
-  produitsDict[code] = nom;
-  await saveProduitsJson();
+  await addCodeToArticle(code, nom);
   cfAddPendingCode = null;
   await cfAddChoose(code, true);
 }
 
 async function cfAddChoose(code, isNew = false) {
   document.activeElement?.blur();
+  // Un code scanné inconnu attend : l'article choisi reçoit ce nouveau code
+  if (cfAddPendingCode && !isNew) {
+    const pending = cfAddPendingCode;
+    cfAddPendingCode = null;
+    const n = await addCodeToArticle(pending, nameOfCode(code));
+    showToast(`Code ajouté à « ${n} » ✓`, 'success');
+    code = pending;
+  }
   const a = { code, nom: nomOf(produitsDict[code]) || code, isNew, dlc: null, qty: 1 };
   cfAdd = a;
   const dlc = await pickDlc('DLC du lot', esc(a.nom));
@@ -849,17 +943,25 @@ async function renameProduct(code, currentNom) {
   loadHistory();
 }
 
-// Renomme dans le dictionnaire et dans tout l'historique
+// Renomme l'article (tous ses codes-barres), ses lots en chambre froide et tout l'historique
 async function renameProductEverywhere(code, nom) {
-  produitsDict[code] = nom;
+  const old = nameOfCode(code);
+  const codes = new Set([code]);
+  if (old) for (const [c, v] of Object.entries(produitsDict)) if (normName(nomOf(v)) === normName(old)) codes.add(c);
+  for (const c of codes) produitsDict[c] = nom;
   await saveProduitsJson();
+  if (old) {
+    const stock = await loadCfStock();
+    const lots = stock.filter(s => normName(s.nom) === normName(old));
+    if (lots.length) { lots.forEach(s => { s.nom = nom; }); await saveCfStock(); }
+  }
   for (const d of await Store.listDays()) {
     const entries = await Store.loadDay(d);
     let changed = false;
-    for (const e of entries) if (e.code === code && e.nom !== nom) { e.nom = nom; changed = true; }
+    for (const e of entries) if (codes.has(e.code) && e.nom !== nom) { e.nom = nom; changed = true; }
     if (changed) await Store.saveDay(d, entries);
   }
-  allEntries = allEntries.map(e => e.code === code ? { ...e, nom } : e);
+  allEntries = allEntries.map(e => codes.has(e.code) ? { ...e, nom } : e);
 }
 
 // ═══════════════════════════════════════
@@ -1089,8 +1191,15 @@ function queueFreezerScan(code) {
     input.value = '';
     input.placeholder = `Nom pour ${code}…`;
     input.dataset.pendingCode = code;
-    input.focus();
-    showToast('Produit inconnu — entre le nom', 'error');
+    showToast('Produit inconnu — entre le nom, ou choisis l\'article', 'error');
+    await loadCfStock();
+    document.getElementById('freezer-alias').innerHTML = aliasPanelHtml();
+    startAliasPicker(code, async n => {
+      document.getElementById('freezer-alias').innerHTML = '';
+      input.placeholder = 'Nom du produit…';
+      delete input.dataset.pendingCode;
+      await addFreezerItem(n, code);
+    });
   });
 }
 
@@ -1099,8 +1208,11 @@ async function addFreezerManual() {
   const nom = input.value.trim();
   if (!nom) return;
   const pendingCode = input.dataset.pendingCode || '';
-  if (pendingCode && !produitsDict[pendingCode]) { produitsDict[pendingCode] = nom; await saveProduitsJson(); }
-  await addFreezerItem(nom, pendingCode);
+  let n = canonicalName(nom);
+  if (pendingCode && !produitsDict[pendingCode]) n = await addCodeToArticle(pendingCode, nom);
+  aliasCtx = null;
+  document.getElementById('freezer-alias').innerHTML = '';
+  await addFreezerItem(n, pendingCode);
   input.value = '';
   input.placeholder = 'Nom du produit…';
   delete input.dataset.pendingCode;

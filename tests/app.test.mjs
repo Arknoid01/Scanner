@@ -676,3 +676,132 @@ test('étiquette de lot : DLC et date d\'entrée imprimées, une par pièce', as
   assert.match(area.textContent, /DLC 05\/01\/2099/);
   assert.match(area.textContent, /Entré le 24\/09\/2026/);
 });
+
+// ── Articles qui changent de code-barres (alias) ──
+const aliasBtn = (doc, nom) => [...doc.querySelectorAll('#cf-link-area .alias-btn')].find(b => b.textContent.replace('🧊 ', '') === nom);
+
+test('code inconnu : sans code-barres en haut, autres dessous, recherche ; le code est ajouté à l\'article choisi', async () => {
+  const { win, doc, errors } = await openPage('index.html', await seededStorage());
+  await scan(win, '777000');
+  await sleep(30);
+  const sections = [...doc.querySelectorAll('.alias-section')].map(e => e.textContent);
+  assert.match(sections[0], /Sans code-barres \(1\)/);
+  assert.match(sections[1], /Autres articles/);
+  const lists = doc.querySelectorAll('#cf-link-area .alias-list');
+  assert.match(lists[0].textContent, /Jambon cru/, 'lot de la chambre froide sans code en haut');
+  assert.doesNotMatch(lists[1].textContent, /Jambon cru/);
+  assert.match(lists[1].textContent, /Faux-filet/);
+  assert.match(lists[1].textContent, /Saucisson sec/);
+
+  // Recherche
+  const search = doc.getElementById('alias-search');
+  search.value = 'faux';
+  search.dispatchEvent(new win.Event('input'));
+  assert.equal(doc.querySelectorAll('#cf-link-area .alias-btn').length, 1);
+
+  // Faux-filet a déjà un code (2000100) : 777000 devient un deuxième code du même article
+  aliasBtn(doc, 'Faux-filet').click();
+  await sleep(80);
+  assert.equal(read(win, 'produits.json')['777000'], 'Faux-filet');
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_2'), undefined, 'lot à DLC la plus proche sorti');
+  assert.equal(read(win, `jours/${today()}.json`)[0].nom, 'Faux-filet');
+
+  // La fois suivante, ce code est reconnu directement
+  await scan(win, '777000');
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_1').qty, 1);
+  assert.equal(read(win, `jours/${today()}.json`).length, 2);
+  assert.deepEqual(errors, []);
+});
+
+test('code inconnu : taper un nom existant (casse / accents différents) le rattache au même article', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  await scan(win, '555000');
+  const input = doc.getElementById('name-input');
+  input.value = 'pate MAISON';
+  input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(80);
+  assert.equal(read(win, 'produits.json')['555000'], 'Pâté maison');
+});
+
+test('réception DLC : deux codes différents du même article → même lot', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.mode-btn[data-mode="dlc"]').click();
+  await sleep(20);
+  await scan(win, '3700001');
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(50);
+  await scan(win, '999111');
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(50);
+  aliasBtn(doc, 'Saucisson sec').click();
+  await sleep(80);
+  const lots = read(win, 'chambre-froide.json').filter(s => s.nom === 'Saucisson sec');
+  assert.equal(lots.length, 1);
+  assert.equal(lots[0].qty, 2);
+});
+
+test('réception viande : poches à codes différents regroupées dans le même lot', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.mode-btn[data-mode="viande"]').click();
+  await sleep(20);
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(20);
+  await scan(win, '4000001');
+  const input = doc.getElementById('meat-name-input');
+  input.value = 'Bavette';
+  input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(80);
+  await scan(win, '4000002');
+  aliasBtn(doc, 'Bavette').click();
+  await sleep(80);
+  await scan(win, '4000002');
+  const lots = read(win, 'chambre-froide.json').filter(s => s.nom === 'Bavette');
+  assert.equal(lots.length, 1);
+  assert.equal(lots[0].qty, 3);
+});
+
+test('renommer un article renomme tous ses codes et ses lots', async () => {
+  const storage = await seededStorage();
+  const prod = JSON.parse(storage['sbf:data/produits.json']);
+  prod['2000100'] = 'Faux-filet';
+  prod['2000999'] = 'Faux-filet';
+  storage['sbf:data/produits.json'] = JSON.stringify(prod);
+  const { win } = await openPage('index.html', storage);
+  await win.renameProductEverywhere('2000999', 'Faux-filet de bœuf');
+  const p = read(win, 'produits.json');
+  assert.equal(p['2000100'], 'Faux-filet de bœuf');
+  assert.equal(p['2000999'], 'Faux-filet de bœuf');
+  assert.ok(read(win, 'chambre-froide.json').filter(s => s.codeFacture === 'F100').every(s => s.nom === 'Faux-filet de bœuf'));
+});
+
+test('page articles : un article à plusieurs codes = une seule fiche, code retirable', async () => {
+  const storage = await seededStorage();
+  const prod = JSON.parse(storage['sbf:data/produits.json']);
+  prod['3700002'] = 'Saucisson sec';
+  storage['sbf:data/produits.json'] = JSON.stringify(prod);
+  const { win, doc, errors } = await openPage('articles.html', storage);
+  const cards = [...doc.querySelectorAll('.article-card')].filter(c => c.querySelector('.article-name').textContent === 'Saucisson sec');
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].textContent, /3700001/);
+  assert.match(cards[0].textContent, /3700002/);
+  win.openEditModal('p_3700001');
+  assert.match(doc.getElementById('code-list').textContent, /3700002/);
+  await win.removeArticleCode('3700002');
+  assert.equal(read(win, 'produits.json')['3700002'], undefined);
+  assert.equal(read(win, 'produits.json')['3700001'], 'Saucisson sec');
+  assert.deepEqual(errors, []);
+});
+
+test('mettre en chambre froide : code scanné inconnu + article existant choisi → code ajouté', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.cf-add-tile').click();
+  await scan(win, '123123');
+  [...doc.querySelectorAll('#cf-add-list .cf-add-item')].find(i => i.textContent.includes('Pâté maison')).click();
+  await sleep(30);
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(20);
+  doc.getElementById('cf-add-confirm').click();
+  await sleep(50);
+  assert.equal(read(win, 'produits.json')['123123'], 'Pâté maison');
+  assert.ok(read(win, 'chambre-froide.json').some(s => s.nom === 'Pâté maison' && s.codePhysique === '123123'));
+});

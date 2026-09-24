@@ -10,6 +10,7 @@ let linkAvailable = [];
 let linkTargetId = null;
 
 const jsArg = v => esc(JSON.stringify(v));
+const normName = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 // Un « article facture » regroupe les lots de même code facture.
 // Les lots ajoutés à la main n'ont pas de code facture : chacun reste un article à part.
@@ -19,17 +20,25 @@ const isLotOf = (item, article) => article.lotKeys && lotKey(item) === article.i
 function buildUnifiedList() {
   const items = [];
 
-  // Articles depuis produits.json (scan manuel ou étiquette maison)
-  for (const [code, nom] of Object.entries(produitsDict)) {
-    const isLabel = code.startsWith('BA');
-    items.push({
+  // Articles depuis produits.json (scan manuel ou étiquette maison).
+  // Un article peut avoir plusieurs codes-barres (même nom) : une seule fiche, tous les codes dessus.
+  const byName = new Map();
+  for (const [code, v] of Object.entries(produitsDict)) {
+    const nom = typeof v === 'object' ? (v.nom || code) : v;
+    const key = normName(nom);
+    const cur = byName.get(key);
+    if (cur) { cur.codes.push(code); if (code.startsWith('BA')) cur.source = 'etiquette'; continue; }
+    const art = {
       id: 'p_' + code,
       kind: 'produit',
-      nom: typeof nom === 'object' ? (nom.nom || code) : nom,
+      nom,
       codeFacture: null,
       codePhysique: code,
-      source: isLabel ? 'etiquette' : 'manuel'
-    });
+      codes: [code],
+      source: code.startsWith('BA') ? 'etiquette' : 'manuel'
+    };
+    byName.set(key, art);
+    items.push(art);
   }
 
   // Articles depuis chambre-froide.json (facture)
@@ -94,7 +103,8 @@ function renderList() {
     items = items.filter(a =>
       a.nom.toLowerCase().includes(query) ||
       (a.codeFacture || '').toLowerCase().includes(query) ||
-      (a.codePhysique || '').toLowerCase().includes(query)
+      (a.codePhysique || '').toLowerCase().includes(query) ||
+      (a.codes || []).some(c => c.toLowerCase().includes(query))
     );
   }
 
@@ -123,7 +133,9 @@ function renderArticleCard(a) {
       </div>
       <div class="article-codes">
         ${a.codeFacture ? `<span class="code-tag">📄 ${esc(a.codeFacture)}</span>` : ''}
-        ${a.codePhysique
+        ${a.codes && a.codes.length > 1
+          ? a.codes.map(c => `<span class="code-tag">🏷️ ${esc(c)}</span>`).join('')
+          : a.codePhysique
           ? `<span class="code-tag">🏷️ ${esc(a.codePhysique)}</span>`
           : '<span class="code-tag empty">⚠️ Sans code physique</span>'}
       </div>
@@ -152,8 +164,32 @@ function openEditModal(id) {
 
   renderLinkedList(article);
   renderLinkTargetSelect(article);
+  renderCodeList(article);
 
   document.getElementById('edit-modal').classList.add('visible');
+}
+
+// Codes-barres supplémentaires de l'article (produits qui changent de code) : on peut en retirer un
+function renderCodeList(article) {
+  const el = document.getElementById('code-list');
+  if (!el) return;
+  const extra = (article.codes || []).filter(c => c !== article.codePhysique);
+  el.innerHTML = extra.length ? `
+    <label class="field-label">Autres codes-barres de cet article</label>
+    ${extra.map(c => `<div class="linked-item">
+        <div class="linked-item-code">🏷️ ${esc(c)}</div>
+        <button class="btn-unlink" onclick="removeArticleCode(${jsArg(c)})">Retirer ✕</button>
+      </div>`).join('')}` : '';
+}
+
+async function removeArticleCode(code) {
+  if (!editingArticle || !confirm(`Retirer le code ${code} de « ${editingArticle.nom} » ?`)) return;
+  delete produitsDict[code];
+  await Store.save('produits.json', produitsDict);
+  editingArticle.codes = editingArticle.codes.filter(c => c !== code);
+  renderCodeList(editingArticle);
+  renderList();
+  showToast('Code retiré ✓', 'success');
 }
 
 function closeEditModal() {
@@ -267,11 +303,12 @@ async function saveArticleEdit() {
 
   try {
     // Tous les codes connus de cet article, pour la propagation dans l'historique
-    const allCodes = [editingArticle.codeFacture, editingArticle.codePhysique, newCodePhysique, newCodeFacture];
+    const allCodes = [editingArticle.codeFacture, editingArticle.codePhysique, newCodePhysique, newCodeFacture, ...(editingArticle.codes || [])];
 
     if (editingArticle.kind === 'produit') {
-      // Renomme dans produits.json
+      // Renomme dans produits.json (tous les codes-barres de l'article)
       const oldCode = editingArticle.codePhysique;
+      (editingArticle.codes || []).forEach(c => { produitsDict[c] = newNom; });
       if (newCodePhysique && newCodePhysique !== oldCode) {
         delete produitsDict[oldCode];
         produitsDict[newCodePhysique] = newNom;
@@ -279,6 +316,12 @@ async function saveArticleEdit() {
         produitsDict[oldCode] = newNom;
       }
       await Store.save('produits.json', produitsDict);
+      // Les lots de la chambre froide portent le nom de l'article : on les renomme aussi
+      if (normName(newNom) !== normName(editingArticle.nom)) {
+        let changed = false;
+        cfStock.forEach(item => { if (normName(item.nom) === normName(editingArticle.nom)) { item.nom = newNom; changed = true; } });
+        if (changed) await Store.save('chambre-froide.json', cfStock);
+      }
     } else {
       // Met à jour tous les lots de ce codeFacture dans chambre-froide.json
       cfStock.forEach(item => {
@@ -321,7 +364,7 @@ async function deleteArticle() {
 
   try {
     if (editingArticle.kind === 'produit') {
-      delete produitsDict[editingArticle.codePhysique];
+      (editingArticle.codes || [editingArticle.codePhysique]).forEach(c => delete produitsDict[c]);
       await Store.save('produits.json', produitsDict);
     } else {
       cfStock = cfStock.filter(item => !isLotOf(item, editingArticle));
