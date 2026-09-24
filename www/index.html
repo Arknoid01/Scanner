@@ -708,6 +708,7 @@
   <div class="header-links">
     <a href="chambre-froide.html" class="header-link">🧊 Chambre froide</a>
     <a href="articles.html" class="header-link">📋 Articles</a>
+    <button class="header-link" onclick="openJsonImport()">📥 Importer</button>
   </div>
 </header>
 
@@ -715,13 +716,24 @@
 <div id="cf-picker-modal" onclick="closeCfPickerOverlay(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:flex-end;justify-content:center;padding:0;">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:720px;max-height:80vh;display:flex;flex-direction:column;">
     <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-size:16px;font-weight:700;">🧊 Choisir dans la chambre froide</div>
+      <div style="font-size:16px;font-weight:700;" id="cf-picker-title">🧊 Choisir dans la chambre froide</div>
       <button onclick="closeCfPickerModal()" style="background:none;border:none;color:var(--text-dim);font-size:24px;cursor:pointer;padding:0 8px;">✕</button>
     </div>
     <div style="padding:10px 16px;">
       <input type="text" id="cf-picker-search" class="name-input" placeholder="🔍 Chercher par nom…" oninput="renderCfPickerList(this.value)" autocomplete="off" style="width:100%;">
     </div>
     <div id="cf-picker-list" style="overflow-y:auto;flex:1;"></div>
+  </div>
+</div>
+
+<!-- Mettre en chambre froide : choisir / créer l'article, puis DLC + quantité -->
+<div id="cf-add-modal" onclick="if(event.target===this) closeCfAdd()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:flex-end;justify-content:center;padding:0;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:720px;max-height:85vh;display:flex;flex-direction:column;">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:16px;font-weight:700;">🧊 Mettre en chambre froide</div>
+      <button onclick="closeCfAdd()" style="background:none;border:none;color:var(--text-dim);font-size:24px;cursor:pointer;padding:0 8px;">✕</button>
+    </div>
+    <div id="cf-add-body" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;"></div>
   </div>
 </div>
 
@@ -748,6 +760,17 @@
     </button>
     <button class="mode-btn" data-mode="partiel" onclick="setMode('partiel')">
       <span class="mode-icon">🍽️</span>Ouverture<span class="mode-sub">reste en stock</span>
+    </button>
+  </div>
+
+  <div class="action-grid">
+    <button class="cf-add-tile" onclick="openCfAdd()">
+      <span class="mode-icon">🧊</span>
+      <span><strong>Mettre en chambre froide</strong><span class="mode-sub">créer ou choisir un article, puis le ranger</span></span>
+    </button>
+    <button class="cf-add-tile out" id="cf-out-tile" onclick="openCfPicker('sortie')">
+      <span class="mode-icon">📤</span>
+      <span><strong>Sortir de la chambre froide</strong><span class="mode-sub">sans scanner : choisis le lot dans la liste</span></span>
     </button>
   </div>
 

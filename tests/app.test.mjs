@@ -318,3 +318,182 @@ test('articles : un renommage se propage dans l\'historique', async () => {
   await win.saveArticleEdit();
   assert.equal(read(win, 'jours/2026-09-20.json')[0].nom, 'Saucisson sec pur porc');
 });
+
+// ── Import JSON copié-collé, tuile « Mettre en chambre froide », sortie sans scan ──
+
+test('import JSON collé : lots fusionnés dans la chambre froide, rien d\'écrasé', async () => {
+  const { win, doc, errors } = await openPage('chambre-froide.html', await seededStorage());
+  win.switchTab('ajout');
+  [...doc.querySelectorAll('#page-ajout button')].find(b => b.textContent.includes('Importer un JSON')).click();
+  assert.equal(doc.querySelector('.json-import-target').value, 'chambre-froide.json');
+  assert.equal(doc.querySelector('.json-import-date').value, today(), 'date du jour proposée');
+  doc.querySelector('.json-import-date').value = '2026-09-22';
+  doc.querySelector('.json-import-text').value = JSON.stringify([
+    { nom: 'Faux-filet', dlc: '2099-01-10', qty: 3, codeFacture: 'F100' },  // même lot → +3
+    { nom: 'Rosette', dlc: '2099-03-01', qty: 2, supplier: 'Chazal' },       // nouveau lot
+    { nom: 'Coppa', dlc: '2099-03-02', dateEntree: '2020-01-01' },           // date du JSON remplacée
+  ]);
+  doc.querySelector('.json-import-ok').click();
+  await sleep(80);
+  const stock = read(win, 'chambre-froide.json');
+  assert.equal(stock.length, 5);
+  assert.equal(stock.find(s => s.id === 'cf_1').qty, 5);
+  const rosette = stock.find(s => s.nom === 'Rosette');
+  assert.equal(rosette.qty, 2);
+  assert.equal(rosette.dateEntree, '2026-09-22', 'date choisie appliquée aux nouveaux lots');
+  assert.equal(stock.find(s => s.nom === 'Coppa').dateEntree, '2026-09-22');
+  assert.equal(stock.find(s => s.id === 'cf_1').dateEntree, '2026-09-01', 'lots existants inchangés');
+  assert.ok(rosette.id);
+  assert.deepEqual(errors, []);
+  win.close();
+});
+
+test('import JSON collé : JSON invalide ou mauvaise forme → message, rien n\'est écrit', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  const before = win.localStorage.getItem('sbf:data/chambre-froide.json');
+  win.openJsonImport();
+  doc.querySelector('.json-import-text').value = '[{ "nom": ';
+  doc.querySelector('.json-import-ok').click();
+  await sleep(30);
+  assert.match(doc.querySelector('.json-import-error').textContent, /invalide/);
+  doc.querySelector('.json-import-target').value = 'produits.json';
+  doc.querySelector('.json-import-text').value = '[1, 2]';
+  doc.querySelector('.json-import-ok').click();
+  await sleep(30);
+  assert.match(doc.querySelector('.json-import-error').textContent, /objet/);
+  assert.equal(win.localStorage.getItem('sbf:data/chambre-froide.json'), before);
+});
+
+test('import JSON : recoller les mêmes lots (mêmes id) ne les double pas', async () => {
+  const { win } = await openPage('index.html');
+  const lots = [{ id: 'x1', nom: 'Boudin', dlc: '2099-01-01', qty: 2 }];
+  const first = win.mergeJsonImport('chambre-froide.json', [], lots);
+  const again = win.mergeJsonImport('chambre-froide.json', first.merged, lots);
+  assert.equal(again.added, 0);
+  assert.equal(again.merged.length, 1);
+  assert.equal(again.merged[0].qty, 2);
+  const prod = win.mergeJsonImport('produits.json', { a: 'A' }, { a: 'A2', b: 'B' });
+  assert.deepEqual({ ...prod.merged }, { a: 'A2', b: 'B' });
+  assert.equal(prod.added, 1);
+});
+
+test('tuile chambre froide : article créé (étiquette BA), rangé avec DLC + quantité, puis sorti au scan', async () => {
+  const { win, doc, errors } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.cf-add-tile').click();
+  const search = doc.getElementById('cf-add-search');
+  search.value = 'Terrine de campagne';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  doc.querySelector('.cf-add-item.create').click();
+  await sleep(30);
+  doc.querySelectorAll('.dlc-quick')[2].click(); // J+7
+  await sleep(30);
+  win.cfAddStep(1);
+  win.cfAddStep(1);
+  doc.getElementById('cf-add-confirm').click();
+  await sleep(50);
+
+  const [code, nom] = Object.entries(read(win, 'produits.json')).find(([, n]) => n === 'Terrine de campagne');
+  assert.ok(code.startsWith('BA'), 'code d\'étiquette maison, comme l\'onglet Étiquettes');
+  const lot = read(win, 'chambre-froide.json').find(s => s.nom === nom);
+  assert.equal(lot.qty, 3);
+  assert.equal(lot.codePhysique, code);
+  assert.equal(lot.dateEntree, today());
+  assert.ok(lot.dlc > today());
+  assert.ok(doc.querySelector('#result-area .btn-print'), 'impression de l\'étiquette proposée');
+  assert.equal(doc.getElementById('cf-add-modal').style.display, 'none');
+
+  await scan(win, code);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.nom === nom).qty, 2);
+  assert.equal(read(win, `jours/${today()}.json`).at(-1).action, 'sortie');
+  assert.deepEqual(errors, []);
+});
+
+test('tuile chambre froide : article existant choisi dans la liste ou scanné', async () => {
+  const { win, doc, errors } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.cf-add-tile').click();
+  const search = doc.getElementById('cf-add-search');
+  search.value = 'sauciss';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  const items = [...doc.querySelectorAll('#cf-add-list .cf-add-item')];
+  items.find(i => i.textContent.includes('Saucisson sec')).click();
+  await sleep(30);
+  doc.querySelector('.dlc-quick').click();
+  await sleep(30);
+  doc.getElementById('cf-add-confirm').click();
+  await sleep(50);
+  const lot = read(win, 'chambre-froide.json').find(s => s.nom === 'Saucisson sec');
+  assert.equal(lot.codePhysique, '3700001');
+  assert.equal(lot.qty, 1);
+  assert.equal(read(win, `jours/${today()}.json`), null, 'une entrée n\'est pas une sortie');
+
+  // Scan d'un produit connu pendant que la fenêtre est ouverte → choisi directement
+  doc.querySelector('.cf-add-tile').click();
+  await scan(win, 'BA12AB');
+  assert.equal(doc.querySelector('.dlc-picker-sub').textContent, 'Pâté maison');
+  doc.querySelector('.dlc-quick').click();
+  await sleep(30);
+  doc.getElementById('cf-add-confirm').click();
+  await sleep(50);
+  assert.ok(read(win, 'chambre-froide.json').some(s => s.nom === 'Pâté maison' && s.codePhysique === 'BA12AB'));
+  assert.deepEqual(errors, []);
+});
+
+test('sortie sans scanner : lot choisi dans la liste (même sans code-barres) → retiré + historique', async () => {
+  const storage = await seededStorage();
+  const stock = JSON.parse(storage['sbf:data/chambre-froide.json']);
+  stock.push({ id: 'm1', nom: 'Boudin blanc', dlc: '2099-01-01', qty: 1, codeFacture: null, codePhysique: null, dateEntree: '2026-09-20' });
+  storage['sbf:data/chambre-froide.json'] = JSON.stringify(stock);
+  const { win, doc, errors } = await openPage('index.html', storage);
+  // Même en mode « réception viande », la tuile fait une vraie sortie
+  win.eval("mode = 'viande'");
+  doc.getElementById('cf-out-tile').click();
+  await sleep(30);
+  const row = [...doc.querySelectorAll('.cf-picker-item')].find(r => r.textContent.includes('Boudin blanc'));
+  assert.match(row.textContent, /entré le 20\/09\/2026/);
+  row.click();
+  await sleep(80);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'm1'), undefined);
+  const hist = read(win, `jours/${today()}.json`);
+  assert.equal(hist[0].nom, 'Boudin blanc');
+  assert.equal(hist[0].action, 'sortie');
+  assert.equal(read(win, 'produits.json')[''], undefined, 'pas de produit au code vide');
+  // Annuler remet le lot
+  doc.querySelector('.btn-undo').click();
+  await sleep(80);
+  assert.ok(read(win, 'chambre-froide.json').find(s => s.id === 'm1'));
+  assert.deepEqual(errors, []);
+});
+
+test('chambre froide : chaque lot affiche sa date d\'entrée, les lots sans date peuvent être datés', async () => {
+  const storage = await seededStorage();
+  const stock = JSON.parse(storage['sbf:data/chambre-froide.json']);
+  stock.push({ id: 'old1', nom: 'Lard', dlc: '2099-01-01', qty: 1 }, { id: 'old2', nom: 'Poitrine', dlc: '2099-01-02', qty: 1 });
+  storage['sbf:data/chambre-froide.json'] = JSON.stringify(stock);
+  const { win, doc, errors } = await openPage('chambre-froide.html', storage);
+  const texts = [...doc.querySelectorAll('.stock-item-entree')].map(e => e.textContent);
+  assert.equal(texts.length, 5);
+  assert.equal(texts.filter(t => t.includes('Entré le 01/09/2026')).length, 3);
+  assert.equal(doc.querySelectorAll('.stock-item-entree.missing').length, 2);
+
+  // Tous les lots sans date d'un coup
+  [...doc.querySelectorAll('button')].find(b => b.textContent.includes('sans date d\'entrée')).click();
+  await sleep(20);
+  doc.querySelector('.dlc-date-input').value = '2026-09-15';
+  doc.querySelector('.dlc-picker .dlc-ok').click();
+  await sleep(50);
+  let after = read(win, 'chambre-froide.json');
+  assert.equal(after.find(s => s.id === 'old1').dateEntree, '2026-09-15');
+  assert.equal(after.find(s => s.id === 'old2').dateEntree, '2026-09-15');
+  assert.equal(after.find(s => s.id === 'cf_1').dateEntree, '2026-09-01');
+
+  // Un seul lot : appui sur sa date
+  win.editDateEntree('old1');
+  await sleep(20);
+  doc.querySelector('.dlc-date-input').value = '2026-09-10';
+  doc.querySelector('.dlc-picker .dlc-ok').click();
+  await sleep(50);
+  after = read(win, 'chambre-froide.json');
+  assert.equal(after.find(s => s.id === 'old1').dateEntree, '2026-09-10');
+  assert.equal(after.find(s => s.id === 'old2').dateEntree, '2026-09-15');
+  assert.deepEqual(errors, []);
+});

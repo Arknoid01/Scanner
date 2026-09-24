@@ -46,6 +46,7 @@ function renderStock() {
   const sorted = [...stock].sort((a, b) => (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
   const reds = sorted.filter(i => ['dlc-danger', 'dlc-expired'].includes(dlcClass(i.dlc)));
   const yellows = sorted.filter(i => dlcClass(i.dlc) === 'dlc-warn');
+  const sansDate = stock.filter(i => !i.dateEntree).length;
 
   el.innerHTML = `
     <div class="stock-header">
@@ -55,6 +56,7 @@ function renderStock() {
         ${yellows.length ? `<div class="alert-badge yellow">🟡 ${yellows.length}</div>` : ''}
       </div>
     </div>
+    ${sansDate ? `<button class="btn-secondary" style="margin-bottom:8px;" onclick="fillMissingDates()">📥 ${sansDate} lot${sansDate > 1 ? 's' : ''} sans date d'entrée — leur en donner une</button>` : ''}
     <div class="stock-list">
       ${sorted.map(item => `
         <div class="stock-item ${dlcClass(item.dlc)}">
@@ -62,6 +64,7 @@ function renderStock() {
             <div class="stock-item-name">${esc(item.nom)}</div>
             <div class="stock-item-meta">
               <span class="stock-item-dlc">${dlcLabel(item.dlc)}</span>
+              <button class="stock-item-entree ${item.dateEntree ? '' : 'missing'}" onclick="editDateEntree(${jsArg(item.id)})">📥 ${item.dateEntree ? `Entré le ${formatDlcDisplay(item.dateEntree)}` : "Date d'entrée ?"}</button>
               ${item.supplier ? `<span class="stock-item-supplier">${esc(item.supplier)}</span>` : ''}
             </div>
           </div>
@@ -72,6 +75,29 @@ function renderStock() {
           </div>
         </div>`).join('')}
     </div>`;
+}
+
+// Date d'entrée d'un lot (les lots importés de l'ancienne version n'en ont pas toujours)
+async function editDateEntree(id) {
+  const item = stock.find(i => i.id === id);
+  if (!item) return;
+  const d = await pickPastDate("Date d'entrée", esc(item.nom), item.dateEntree);
+  if (!d) return;
+  item.dateEntree = d;
+  await saveStock();
+  renderStock();
+  showToast("Date d'entrée enregistrée ✓", 'success');
+}
+
+async function fillMissingDates() {
+  const missing = stock.filter(i => !i.dateEntree);
+  if (!missing.length) return;
+  const d = await pickPastDate("Date d'entrée", `Appliquée aux ${missing.length} lot(s) qui n'en ont pas`);
+  if (!d) return;
+  missing.forEach(i => { i.dateEntree = d; });
+  await saveStock();
+  renderStock();
+  showToast("Dates d'entrée enregistrées ✓", 'success');
 }
 
 async function addOneItem(id) {

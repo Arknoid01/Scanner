@@ -141,3 +141,59 @@ button, .tab, .header-link { touch-action: manipulation; }
 .page { max-width: 1000px; width: 100%; margin: 0 auto; }
 #settings-content { display: flex; flex-direction: column; gap: 16px; }
 @media print { body { background: #fff !important; color: #000 !important; } }
+
+/* ── Import JSON copié-collé ── */
+.json-import-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.json-import {
+  width: 100%; max-width: 720px; max-height: 90vh; overflow-y: auto; background: #1a1a2e; color: #f0ece4;
+  border: 1px solid #2e2e4a; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.json-import-target, .json-import-text {
+  width: 100%; background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 12px; font-size: 15px; font-family: inherit;
+}
+.json-import-text { min-height: 220px; font-family: monospace; font-size: 13px; resize: vertical; }
+.json-import-error { color: #ff6b6b; font-size: 14px; font-weight: 600; }
+.json-import-error:empty { display: none; }
+
+/* ── Tuile « Mettre en chambre froide » (accueil) ── */
+.cf-add-tile {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 12px 18px;
+  border-radius: 14px; cursor: pointer; text-align: left; font-family: inherit; font-size: 16px;
+  background: rgba(125,211,252,.08); border: 2px solid rgba(125,211,252,.35); color: #7dd3fc;
+}
+.cf-add-tile .mode-icon { font-size: 30px; line-height: 1; }
+.cf-add-tile .mode-sub { display: block; font-size: 12px; font-weight: 500; color: var(--text-dim, #9090a8); margin-top: 2px; }
+.cf-add-tile:active { background: rgba(125,211,252,.18); }
+
+/* ── Fenêtre « Mettre en chambre froide » ── */
+.cf-add-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--border, #2e2e4a); cursor: pointer; font-size: 15px;
+}
+.cf-add-item small { color: var(--text-dim, #9090a8); font-family: monospace; font-size: 11px; }
+.cf-add-item.create { color: #2dc653; font-weight: 700; }
+.cf-add-hint { padding: 10px 16px; font-size: 13px; color: var(--text-dim, #9090a8); }
+.cf-add-form { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cf-add-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; }
+.qty-stepper { display: flex; align-items: center; gap: 10px; }
+.qty-stepper button {
+  width: 52px; height: 52px; border-radius: 12px; font-size: 24px; font-weight: 700; cursor: pointer;
+  background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.qty-stepper .qty-value { min-width: 48px; text-align: center; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.json-import-date-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 600; flex-wrap: wrap; }
+.json-import-date {
+  background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 10px 12px; font-size: 16px; font-family: inherit; color-scheme: dark;
+}
+
+/* ── Tuiles d'action chambre froide (accueil) ── */
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .action-grid { grid-template-columns: 1fr; } }
+.cf-add-tile.out { background: rgba(37,99,235,.12); border-color: rgba(59,130,246,.5); color: #93c5fd; }
+.cf-add-tile.out:active { background: rgba(37,99,235,.25); }

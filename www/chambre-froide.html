@@ -296,7 +296,18 @@
   .dlc-danger .stock-item-dlc { background: rgba(239,68,68,.15); color: var(--red); }
   .dlc-expired .stock-item-dlc { background: rgba(239,68,68,.2); color: var(--red); }
 
-  .stock-item-supplier {
+  .stock-item-entree {
+    font-size: 12px;
+    color: var(--text);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: var(--font);
+    cursor: pointer;
+  }
+  .stock-item-entree.missing { color: var(--yellow); border-color: rgba(245,158,11,.5); }
+    .stock-item-supplier {
     font-size: 11px;
     color: var(--text-dim);
   }
@@ -610,6 +621,13 @@
       </div>
       <button class="btn-primary" onclick="addManualItem()">Ajouter au stock</button>
     </div>
+  </div>
+  <div class="card">
+    <div class="card-title">📥 Coller un JSON</div>
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">
+      Colle une liste de lots (même format que la version web) : elle est fusionnée avec le stock, rien n'est écrasé.
+    </p>
+    <button class="btn-ice" onclick="openJsonImport('chambre-froide.json')">📥 Importer un JSON</button>
   </div>
 </div>
 

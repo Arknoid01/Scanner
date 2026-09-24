@@ -56,6 +56,7 @@ function newCfId() { return 'cf_' + Date.now() + '_' + Math.random().toString(36
 // ═══════════════════════════════════════
 function onBarcode(code) {
   const tab = document.querySelector('.tab.active')?.dataset.tab;
+  if (cfAddOpen()) { cfAddScan(code); return; }
   if (tab === 'freezer') { queueFreezerScan(code); return; }
   if (tab !== 'scan') switchTab('scan');
   queueScan(code);
@@ -123,7 +124,7 @@ function renderModeContext() {
     ready.textContent = 'Scanne un produit à ranger';
   } else if (mode === 'partiel') {
     el.innerHTML = `<span>🍽️ Note l'ouverture sans retirer le produit du stock.</span>
-      <button onclick="openCfPicker()">📋 Choisir sans scanner</button>`;
+      <button onclick="openCfPicker('ouverture')">📋 Choisir sans scanner</button>`;
     ready.textContent = 'Scanne le produit entamé';
   } else {
     el.innerHTML = '';
@@ -184,7 +185,7 @@ async function handleExitScan(code) {
 async function recordExit(code, nom, cfItem, partial) {
   let cfRestore = null;
   if (cfItem && !partial) cfRestore = await deductFromCf(cfItem);
-  if (!produitsDict[code]) { produitsDict[code] = nom; saveProduitsJson(); }
+  if (code && !produitsDict[code]) { produitsDict[code] = nom; saveProduitsJson(); }
 
   const entry = await Store.addHistoryEntry({ code, nom, action: partial ? 'ouverture' : 'sortie' });
   currentScan = { code, nom, date: entry.date, entryId: entry.id };
@@ -384,20 +385,22 @@ async function confirmDlcModeName(code, dlc) {
   await addToColdStorageWithDlc(code, nom, dlc);
 }
 
-async function addToColdStorageWithDlc(code, nom, dlc) {
+async function addToColdStorageWithDlc(code, nom, dlc, qty = 1, extraHtml = '') {
   const stock = await loadCfStock();
-  // Même code et même DLC : on regroupe dans le même lot
-  let item = stock.find(s => (s.codePhysique === code || s.codeFacture === code) && s.dlc === dlc);
-  if (item) item.qty++;
+  const dateEntree = localDateStr(new Date());
+  // Même code, même DLC, entré le même jour : on regroupe dans le même lot
+  let item = stock.find(s => (s.codePhysique === code || s.codeFacture === code) && s.dlc === dlc && s.dateEntree === dateEntree);
+  if (item) item.qty += qty;
   else {
-    item = { id: newCfId(), nom, dlc, qty: 1, supplier: 'Saisie manuelle',
-             codeFacture: code, codePhysique: code, dateEntree: localDateStr(new Date()) };
+    item = { id: newCfId(), nom, dlc, qty, supplier: 'Saisie manuelle',
+             codeFacture: code, codePhysique: code, dateEntree };
     stock.push(item);
   }
   await saveCfStock();
   showResult(code, 'known', `
     <div class="result-name">${esc(nom)}</div>
-    ${badge(...BADGE_BLUE, `🧊 Rangé en chambre froide — DLC ${formatDlcDisplay(dlc)} — total : ${item.qty}`)}`);
+    ${badge(...BADGE_BLUE, `🧊 Rangé en chambre froide — DLC ${formatDlcDisplay(dlc)} — total : ${item.qty}`)}
+    ${extraHtml}`);
   showToast(`${nom} ajouté ✓`, 'success');
 }
 
@@ -405,18 +408,18 @@ async function addToColdStorageWithDlc(code, nom, dlc) {
 // CHOIX DANS LA CHAMBRE FROIDE (sans code-barres)
 // ═══════════════════════════════════════
 let cfPickerItems = [];
+let cfPickerAction = 'sortie'; // 'sortie' (tuile) | 'ouverture' (mode ouverture)
 
-async function openCfPicker() {
+async function openCfPicker(action = 'sortie') {
+  cfPickerAction = action;
+  document.getElementById('cf-picker-title').textContent =
+    action === 'ouverture' ? '🍽️ Quel produit est entamé ?' : '📤 Sortir de la chambre froide';
   document.getElementById('cf-picker-modal').style.display = 'flex';
   document.getElementById('cf-picker-search').value = '';
   const stock = await loadCfStock();
-  const seen = new Set();
-  cfPickerItems = stock.filter(s => {
-    const key = (s.nom || s.codeFacture || s.codePhysique || '').toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr'));
+  // Chaque lot séparément (DLC et date d'entrée différentes), par nom puis DLC la plus proche
+  cfPickerItems = [...stock].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr')
+    || (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
   renderCfPickerList('');
 }
 
@@ -431,16 +434,182 @@ function renderCfPickerList(q) {
   }
   list.innerHTML = filtered.map(s => {
     const code = s.codePhysique || s.codeFacture || '';
-    return `<div class="cf-picker-item" onclick="pickCfItem(${jsArg(code)})">
+    return `<div class="cf-picker-item" onclick="pickCfItem(${jsArg(s.id)})">
       <div class="cf-picker-item-nom">${esc(s.nom || 'Sans nom')}</div>
-      <div class="cf-picker-item-meta">DLC : ${formatDlcDisplay(s.dlc)} · Qté : ${s.qty ?? '—'} · ${esc(code)}</div>
+      <div class="cf-picker-item-meta">DLC : ${formatDlcDisplay(s.dlc)} · Qté : ${s.qty ?? '—'}${s.dateEntree ? ` · entré le ${formatDlcDisplay(s.dateEntree)}` : ''}${code ? ` · ${esc(code)}` : ''}</div>
     </div>`;
   }).join('');
 }
 
-function pickCfItem(code) { closeCfPickerModal(); queueScan(code); }
+// Sortie (ou ouverture) du lot choisi, comme si on l'avait scanné — quel que soit le mode en cours
+function pickCfItem(id) {
+  closeCfPickerModal();
+  if (tabIsNot('scan')) switchTab('scan');
+  scanQueue = scanQueue.then(async () => {
+    finalizeUndo();
+    const item = (await loadCfStock()).find(s => s.id === id);
+    if (!item) return;
+    await recordExit(item.codePhysique || item.codeFacture || '', item.nom, item, cfPickerAction === 'ouverture');
+  });
+}
 function closeCfPickerModal() { document.getElementById('cf-picker-modal').style.display = 'none'; }
 function closeCfPickerOverlay(e) { if (e.target.id === 'cf-picker-modal') closeCfPickerModal(); }
+
+const tabIsNot = t => document.querySelector('.tab.active')?.dataset.tab !== t;
+
+// ═══════════════════════════════════════
+// METTRE EN CHAMBRE FROIDE — choisir ou créer l'article, puis DLC + quantité
+// ═══════════════════════════════════════
+// Les articles sont ceux de produits.json (scans + étiquettes). Un article créé ici reçoit
+// un code d'étiquette « BA… » comme dans l'onglet Étiquettes : on peut l'imprimer, et le scanner le sortira.
+let cfAdd = null;            // { code, nom, isNew, dlc, qty } une fois l'article choisi
+let cfAddPendingCode = null; // code scanné inconnu : sera le code de l'article créé
+
+const cfAddOpen = () => document.getElementById('cf-add-modal')?.style.display === 'flex';
+const nomOf = v => typeof v === 'object' && v ? (v.nom || '') : String(v ?? '');
+
+function openCfAdd() {
+  cfAdd = null;
+  cfAddPendingCode = null;
+  document.getElementById('cf-add-modal').style.display = 'flex';
+  renderCfAddSearch();
+}
+
+function closeCfAdd() {
+  document.getElementById('cf-add-modal').style.display = 'none';
+  cfAdd = null;
+  cfAddPendingCode = null;
+  document.activeElement?.blur();
+}
+
+function renderCfAddSearch() {
+  document.getElementById('cf-add-body').innerHTML = `
+    <div style="padding:10px 16px;">
+      <input type="text" id="cf-add-search" class="name-input" autocomplete="off" style="width:100%;"
+             placeholder="🔍 Chercher un article, ou taper le nom d'un nouveau…"
+             oninput="renderCfAddList()" onkeydown="if(event.key==='Enter') cfAddEnter()">
+    </div>
+    <div class="cf-add-hint" id="cf-add-hint">📡 Tu peux aussi scanner l'étiquette du produit.</div>
+    <div id="cf-add-list"></div>`;
+  renderCfAddList();
+}
+
+function cfAddMatches(q) {
+  q = q.trim().toLowerCase();
+  return Object.entries(produitsDict)
+    .map(([code, v]) => ({ code, nom: nomOf(v) || code }))
+    .filter(a => !q || a.nom.toLowerCase().includes(q) || a.code.toLowerCase() === q)
+    .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+}
+
+function renderCfAddList() {
+  const q = (document.getElementById('cf-add-search')?.value || '').trim();
+  const matches = cfAddMatches(q);
+  const exact = matches.some(a => a.nom.toLowerCase() === q.toLowerCase());
+  const create = q && !exact
+    ? `<div class="cf-add-item create" onclick="cfAddCreate()">➕ Créer l'article « ${esc(q)} »
+        <small>${cfAddPendingCode ? esc(cfAddPendingCode) : 'nouvelle étiquette'}</small></div>`
+    : '';
+  const shown = matches.slice(0, 100);
+  document.getElementById('cf-add-list').innerHTML = create + (shown.length
+    ? shown.map(a => `<div class="cf-add-item" onclick="cfAddChoose(${jsArg(a.code)})">
+        <span>${a.code.startsWith('BA') ? '🏷️' : '📦'} ${esc(a.nom)}</span><small>${esc(a.code)}</small></div>`).join('')
+    : (create ? '' : '<div class="cf-add-hint">Aucun article — tape un nom pour le créer.</div>'));
+}
+
+function cfAddEnter() {
+  const q = document.getElementById('cf-add-search').value.trim();
+  if (!q) return;
+  const matches = cfAddMatches(q);
+  const exact = matches.find(a => a.nom.toLowerCase() === q.toLowerCase() || a.code === q);
+  if (exact) cfAddChoose(exact.code);
+  // La douchette a tapé dans le champ : c'est un code-barres, pas un nom
+  else if (/^\d{6,}$/.test(q)) { document.getElementById('cf-add-search').value = ''; cfAddScan(q); }
+  else if (matches.length === 1) cfAddChoose(matches[0].code);
+  else cfAddCreate();
+}
+
+// Scan pendant que la fenêtre est ouverte : article connu → choisi, sinon on le crée avec ce code
+function cfAddScan(code) {
+  if (navigator.vibrate) navigator.vibrate(80);
+  if (cfAdd) { showToast("Termine d'abord cet article", 'error'); return; }
+  if (produitsDict[code]) { cfAddChoose(code); return; }
+  cfAddPendingCode = code;
+  document.getElementById('cf-add-hint').innerHTML = `📡 Code <strong>${esc(code)}</strong> inconnu — tape son nom puis « Créer ».`;
+  document.getElementById('cf-add-search').focus();
+  renderCfAddList();
+}
+
+async function cfAddCreate() {
+  const nom = document.getElementById('cf-add-search').value.trim();
+  if (!nom) { showToast('Entre un nom', 'error'); return; }
+  const code = cfAddPendingCode || generateCode(nom);
+  produitsDict[code] = nom;
+  await saveProduitsJson();
+  cfAddPendingCode = null;
+  await cfAddChoose(code, true);
+}
+
+async function cfAddChoose(code, isNew = false) {
+  document.activeElement?.blur();
+  const a = { code, nom: nomOf(produitsDict[code]) || code, isNew, dlc: null, qty: 1 };
+  cfAdd = a;
+  const dlc = await pickDlc('DLC du lot', a.nom);
+  if (cfAdd !== a) return; // fenêtre fermée entre-temps
+  if (!dlc) { cfAdd = null; renderCfAddSearch(); return; }
+  a.dlc = dlc;
+  renderCfAddForm();
+}
+
+function renderCfAddForm() {
+  const a = cfAdd;
+  document.getElementById('cf-add-body').innerHTML = `
+    <div class="cf-add-form">
+      <div>
+        <div class="result-name">${esc(a.nom)}</div>
+        <div style="font-family:monospace;font-size:12px;color:var(--text-dim);">${esc(a.code)}${a.isNew ? ' · article créé ✓' : ''}</div>
+      </div>
+      <div class="cf-add-row">
+        <span>📅 DLC : <strong>${formatDlcDisplay(a.dlc)}</strong></span>
+        <button class="btn-edit" onclick="cfAddChangeDlc()">Changer</button>
+      </div>
+      <div class="cf-add-row">
+        <span>Quantité</span>
+        <div class="qty-stepper">
+          <button onclick="cfAddStep(-1)">−</button>
+          <span class="qty-value" id="cf-add-qty">${a.qty}</span>
+          <button onclick="cfAddStep(1)">+</button>
+        </div>
+      </div>
+      <div class="cf-add-row" style="color:var(--text-dim);font-size:13px;">Date d'entrée : aujourd'hui (${formatDlcDisplay(localDateStr(new Date()))})</div>
+      <button class="btn-save" id="cf-add-confirm" onclick="cfAddConfirm()">🧊 Ranger en chambre froide</button>
+      <button class="btn-edit" onclick="cfAdd=null;renderCfAddSearch()">← Choisir un autre article</button>
+    </div>`;
+}
+
+async function cfAddChangeDlc() {
+  const dlc = await pickDlc('DLC du lot', cfAdd?.nom || '');
+  if (!dlc || !cfAdd) return;
+  cfAdd.dlc = dlc;
+  renderCfAddForm();
+}
+
+function cfAddStep(delta) {
+  cfAdd.qty = Math.max(1, cfAdd.qty + delta);
+  document.getElementById('cf-add-qty').textContent = cfAdd.qty;
+}
+
+async function cfAddConfirm() {
+  const a = cfAdd;
+  if (!a || !a.dlc) return;
+  closeCfAdd();
+  finalizeUndo();
+  // Étiquette maison : on propose de l'imprimer tout de suite, pour pouvoir la scanner à la sortie
+  const print = a.code.startsWith('BA')
+    ? `<button class="btn-print" style="margin-top:10px;" onclick="showBarcode(${jsArg(a.code)}, ${jsArg(a.nom)});printBarcode()">🖨️ Imprimer l'étiquette</button>`
+    : '';
+  await addToColdStorageWithDlc(a.code, a.nom, a.dlc, a.qty, print);
+}
 
 // ═══════════════════════════════════════
 // DERNIERS SCANS DU JOUR
