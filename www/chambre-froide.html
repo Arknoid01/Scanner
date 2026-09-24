@@ -264,10 +264,10 @@
     gap: 12px;
     transition: border-color .2s;
   }
-  .stock-item.dlc-ok { border-left: 3px solid var(--green); }
-  .stock-item.dlc-warn { border-left: 3px solid var(--yellow); }
-  .stock-item.dlc-danger { border-left: 3px solid var(--red); }
-  .stock-item.dlc-expired { border-left: 3px solid var(--red); background: rgba(239,68,68,.05); }
+  .stock-item.lot-ok { border-left: 3px solid var(--green); }
+  .stock-item.lot-warn { border-left: 3px solid var(--yellow); }
+  .stock-item.lot-danger { border-left: 3px solid var(--red); }
+  .stock-item.lot-expired { border-left: 3px solid var(--red); background: rgba(239,68,68,.05); }
 
   .stock-item-info { flex: 1; min-width: 0; }
   .stock-item-name {
@@ -291,11 +291,20 @@
     border-radius: 4px;
     font-weight: 700;
   }
-  .dlc-ok .stock-item-dlc { background: rgba(34,197,94,.15); color: var(--green); }
-  .dlc-warn .stock-item-dlc { background: rgba(245,158,11,.15); color: var(--yellow); }
-  .dlc-danger .stock-item-dlc { background: rgba(239,68,68,.15); color: var(--red); }
-  .dlc-expired .stock-item-dlc { background: rgba(239,68,68,.2); color: var(--red); }
+  .lot-ok .stock-item-dlc { background: rgba(34,197,94,.15); color: var(--green); }
+  .lot-warn .stock-item-dlc { background: rgba(245,158,11,.15); color: var(--yellow); }
+  .lot-danger .stock-item-dlc { background: rgba(239,68,68,.15); color: var(--red); }
+  .lot-expired .stock-item-dlc { background: rgba(239,68,68,.2); color: var(--red); }
 
+  .stock-tools { display: flex; flex-direction: column; gap: 10px; }
+  .sort-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sort-label { font-size: 13px; color: var(--text-dim); }
+  .sort-chip {
+    background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); border-radius: 100px;
+    padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: var(--font);
+  }
+  .sort-chip.active { color: var(--ice); border-color: var(--ice); background: var(--blue-dim); }
+  .stock-item-info { cursor: pointer; }
   .stock-item-entree {
     font-size: 12px;
     color: var(--text);
@@ -587,6 +596,16 @@
 <div class="page active" id="page-stock">
   <div class="card" style="font-size:13px;color:var(--text-dim);">
     📡 Scanner une poche ici l'enregistre en <strong>sortie</strong> (comme sur la page Scanner).
+    Appuie sur un lot pour <strong>corriger sa DLC ou sa date d'entrée</strong>, ou le sortir, le jeter, le congeler.
+  </div>
+  <div class="stock-tools">
+    <input type="text" class="input-field" id="stock-search" placeholder="🔍 Chercher un lot…" oninput="renderStock()" autocomplete="off">
+    <div class="sort-chips">
+      <span class="sort-label">Trier :</span>
+      <button class="sort-chip" data-sort="dlc" onclick="setStockSort('dlc')">DLC</button>
+      <button class="sort-chip" data-sort="nom" onclick="setStockSort('nom')">Nom</button>
+      <button class="sort-chip" data-sort="entree" onclick="setStockSort('entree')">Entrée récente</button>
+    </div>
   </div>
   <div id="stock-content"></div>
 </div>

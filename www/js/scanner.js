@@ -40,7 +40,7 @@ async function loadCfStock() {
   cfStock = (await Store.load('chambre-froide.json')) || [];
   return cfStock;
 }
-async function saveCfStock() { if (cfStock) await Store.save('chambre-froide.json', cfStock); }
+async function saveCfStock() { if (cfStock) await Store.save('chambre-froide.json', cfStock); renderDlcBanner(); }
 
 async function loadCfMapping() {
   if (cfMappingCache) return cfMappingCache;
@@ -93,6 +93,7 @@ const badge = (color, bg, text) =>
 const BADGE_BLUE = ['#7dd3fc', 'rgba(37,99,235,.15)'];
 const BADGE_GREEN = ['var(--green)', 'rgba(34,197,94,.15)'];
 const BADGE_YELLOW = ['#fbbf24', 'rgba(245,158,11,.15)'];
+const BADGE_RED = ['#ff6b6b', 'rgba(230,57,70,.15)'];
 
 // ═══════════════════════════════════════
 // MODES
@@ -153,10 +154,10 @@ async function checkCfMatch(code) {
   return candidats[0] || null;
 }
 
-// Retire 1 du lot ; renvoie de quoi annuler
-async function deductFromCf(item) {
+// Retire n du lot ; renvoie de quoi annuler
+async function deductFromCf(item, n = 1) {
   const snapshot = { ...item };
-  item.qty--;
+  item.qty -= n;
   const removed = item.qty <= 0;
   if (removed) cfStock = cfStock.filter(s => s.id !== item.id);
   await saveCfStock();
@@ -167,7 +168,7 @@ async function restoreCf(restore) {
   if (!restore) return;
   const stock = await loadCfStock();
   if (restore.removed) stock.push(restore.snapshot);
-  else { const it = stock.find(s => s.id === restore.id); if (it) it.qty++; }
+  else { const it = stock.find(s => s.id === restore.id); if (it) it.qty += restore.snapshot.qty - it.qty; }
   await saveCfStock();
 }
 
@@ -181,22 +182,30 @@ async function handleExitScan(code) {
   await recordExit(code, nom, cfItem, partial);
 }
 
-// Enregistre la sortie (ou l'ouverture) : stock + historique, avec annulation possible
-async function recordExit(code, nom, cfItem, partial) {
+// Enregistre la sortie (ou l'ouverture, la perte, la congélation) : stock + historique, avec annulation possible
+// kind : 'sortie' | 'perte' | 'congelation' ; qty : nombre de pièces retirées du lot
+async function recordExit(code, nom, cfItem, partial, { kind = 'sortie', qty = 1 } = {}) {
+  if (cfItem && !partial) qty = Math.max(1, Math.min(qty, cfItem.qty));
   let cfRestore = null;
-  if (cfItem && !partial) cfRestore = await deductFromCf(cfItem);
+  if (cfItem && !partial) cfRestore = await deductFromCf(cfItem, qty);
   if (code && !produitsDict[code]) { produitsDict[code] = nom; saveProduitsJson(); }
 
-  const entry = await Store.addHistoryEntry({ code, nom, action: partial ? 'ouverture' : 'sortie' });
+  let freezerIds = null;
+  if (kind === 'congelation') freezerIds = await addToFreezer(nom, code, qty);
+
+  const action = partial ? 'ouverture' : kind;
+  const entry = await Store.addHistoryEntry({ code, nom, action, qty: partial ? 1 : qty });
   currentScan = { code, nom, date: entry.date, entryId: entry.id };
 
   let info = '📋 Noté dans l\'historique';
+  // « Sorti » pour 1 pièce, « 3 sortis » pour plusieurs
+  const verb = w => qty > 1 ? `${qty} ${w}s` : w[0].toUpperCase() + w.slice(1);
+  const left = () => cfRestore.removed ? 0 : cfItem.qty;
   if (cfItem && partial) info = `🍽️ Ouverture notée — reste en chambre froide`;
-  else if (cfItem) {
-    const left = cfRestore.removed ? 0 : cfItem.qty;
-    info = `🧊 Sorti de la chambre froide — reste ${left}`;
-  }
-  const [c, bg] = cfItem && partial ? BADGE_YELLOW : BADGE_BLUE;
+  else if (cfItem && kind === 'perte') info = `🗑️ ${verb('jeté')} (perte) — reste ${left()}`;
+  else if (cfItem && kind === 'congelation') info = `❄️ ${verb('passé')} au congélateur — reste ${left()}`;
+  else if (cfItem) info = `🧊 ${verb('sorti')} de la chambre froide — reste ${left()}`;
+  const [c, bg] = cfItem && partial ? BADGE_YELLOW : kind === 'perte' ? BADGE_RED : BADGE_BLUE;
 
   showResult(code, 'known', `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -206,7 +215,7 @@ async function recordExit(code, nom, cfItem, partial) {
     <div id="scan-edit-area"></div>
     ${badge(c, bg, info)}
     ${undoRowHtml()}`);
-  startUndo({ date: entry.date, entryId: entry.id, cfRestore });
+  startUndo({ date: entry.date, entryId: entry.id, cfRestore, freezerIds });
   renderRecent();
 }
 
@@ -308,6 +317,7 @@ async function undoLast() {
   finalizeUndo();
   await Store.removeHistoryEntry(u.date, u.entryId);
   await restoreCf(u.cfRestore);
+  if (u.freezerIds) await removeFromFreezer(u.freezerIds);
   hideResult();
   renderRecent();
   showToast('Annulé ✓', 'success');
@@ -409,17 +419,30 @@ async function addToColdStorageWithDlc(code, nom, dlc, qty = 1, extraHtml = '') 
 // ═══════════════════════════════════════
 let cfPickerItems = [];
 let cfPickerAction = 'sortie'; // 'sortie' (tuile) | 'ouverture' (mode ouverture)
+let cfPickerFilter = null;     // null | 'urgent'
+let cfLot = null;              // lot ouvert dans la fiche d'action : { id, qty }
 
-async function openCfPicker(action = 'sortie') {
+// filter 'urgent' : seulement les lots à DLC dépassée ou proche (bandeau d'alerte)
+async function openCfPicker(action = 'sortie', filter = null) {
   cfPickerAction = action;
+  cfPickerFilter = filter;
+  cfLot = null;
   document.getElementById('cf-picker-title').textContent =
-    action === 'ouverture' ? '🍽️ Quel produit est entamé ?' : '📤 Sortir de la chambre froide';
+    action === 'ouverture' ? '🍽️ Quel produit est entamé ?'
+    : filter === 'urgent' ? '⚠️ DLC dépassée ou proche' : '📤 Sortir de la chambre froide';
   document.getElementById('cf-picker-modal').style.display = 'flex';
   document.getElementById('cf-picker-search').value = '';
+  document.getElementById('cf-picker-search').parentElement.style.display = '';
   const stock = await loadCfStock();
-  // Chaque lot séparément (DLC et date d'entrée différentes), par nom puis DLC la plus proche
-  cfPickerItems = [...stock].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr')
-    || (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
+  if (filter === 'urgent') {
+    // Les plus urgents d'abord
+    cfPickerItems = stock.filter(s => dlcLevel(s.dlc) !== 'ok')
+      .sort((a, b) => (a.dlc || '').localeCompare(b.dlc || ''));
+  } else {
+    // Chaque lot séparément (DLC et date d'entrée différentes), par nom puis DLC la plus proche
+    cfPickerItems = [...stock].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr')
+      || (a.dlc || '9999-12-31').localeCompare(b.dlc || '9999-12-31'));
+  }
   renderCfPickerList('');
 }
 
@@ -434,26 +457,123 @@ function renderCfPickerList(q) {
   }
   list.innerHTML = filtered.map(s => {
     const code = s.codePhysique || s.codeFacture || '';
-    return `<div class="cf-picker-item" onclick="pickCfItem(${jsArg(s.id)})">
-      <div class="cf-picker-item-nom">${esc(s.nom || 'Sans nom')}</div>
-      <div class="cf-picker-item-meta">DLC : ${formatDlcDisplay(s.dlc)} · Qté : ${s.qty ?? '—'}${s.dateEntree ? ` · entré le ${formatDlcDisplay(s.dateEntree)}` : ''}${code ? ` · ${esc(code)}` : ''}</div>
+    return `<div class="cf-picker-item lvl-${dlcLevel(s.dlc)}" onclick="pickCfItem(${jsArg(s.id)})">
+      <div class="cf-picker-item-nom">${esc(s.nom || 'Sans nom')} <span class="cf-picker-qty">×${s.qty ?? '—'}</span></div>
+      <div class="cf-picker-item-meta">${dlcText(s.dlc)}${s.dateEntree ? ` · entré le ${formatDlcDisplay(s.dateEntree)}` : ''}${code ? ` · ${esc(code)}` : ''}</div>
     </div>`;
   }).join('');
 }
 
-// Sortie (ou ouverture) du lot choisi, comme si on l'avait scanné — quel que soit le mode en cours
+// Ouverture : noté tout de suite. Sortie : fiche du lot (quantité, sortir / jeté / congeler / étiquette)
 function pickCfItem(id) {
+  if (cfPickerAction === 'ouverture') {
+    closeCfPickerModal();
+    runLotAction(id, 'ouverture', 1);
+    return;
+  }
+  const item = cfStock.find(s => s.id === id);
+  if (!item) return;
+  cfLot = { id, qty: 1 };
+  document.getElementById('cf-picker-search').parentElement.style.display = 'none';
+  renderLotSheet();
+}
+
+function renderLotSheet() {
+  const item = cfStock.find(s => s.id === cfLot.id);
+  if (!item) { closeCfPickerModal(); return; }
+  const code = item.codePhysique || item.codeFacture || '';
+  const many = item.qty > 1;
+  document.getElementById('cf-picker-list').innerHTML = `
+    <div class="cf-add-form">
+      <div>
+        <div class="result-name">${esc(item.nom)}</div>
+        <div class="cf-picker-item-meta lvl-${dlcLevel(item.dlc)}" style="font-size:13px;margin-top:4px;">
+          ${dlcText(item.dlc)} · ${item.qty} en stock${item.dateEntree ? ` · entré le ${formatDlcDisplay(item.dateEntree)}` : ''}</div>
+      </div>
+      ${many ? `<div class="cf-add-row">
+        <span>Combien ?</span>
+        <div class="qty-stepper">
+          <button onclick="lotStep(-1)">−</button>
+          <span class="qty-value" id="lot-qty">${cfLot.qty}</span>
+          <button onclick="lotStep(1)">+</button>
+          <button class="qty-all" onclick="lotStep(${item.qty})">Tout</button>
+        </div>
+      </div>` : ''}
+      <div class="lot-actions">
+        <button class="lot-btn out" id="lot-sortie" onclick="lotAction('sortie')">📤 Sortir</button>
+        <button class="lot-btn waste" id="lot-perte" onclick="lotAction('perte')">🗑️ Jeté (perte)</button>
+        <button class="lot-btn freeze" id="lot-congelation" onclick="lotAction('congelation')">❄️ Congeler</button>
+        ${code ? `<button class="lot-btn" onclick="printLotLabels(${jsArg(code)}, ${jsArg(item.nom)}, ${jsArg(item.dlc)}, ${jsArg(item.dateEntree || '')}, cfLot.qty)">🖨️ Étiquette</button>` : ''}
+      </div>
+      <button class="btn-edit" onclick="openCfPicker(cfPickerAction, cfPickerFilter)">← Retour à la liste</button>
+    </div>`;
+}
+
+function lotStep(delta) {
+  const item = cfStock.find(s => s.id === cfLot.id);
+  cfLot.qty = Math.max(1, Math.min(item.qty, cfLot.qty + delta));
+  document.getElementById('lot-qty').textContent = cfLot.qty;
+}
+
+function lotAction(kind) {
+  const { id, qty } = cfLot;
   closeCfPickerModal();
+  runLotAction(id, kind, qty);
+}
+
+// Sortie / perte / congélation / ouverture d'un lot choisi, comme si on l'avait scanné — quel que soit le mode
+function runLotAction(id, kind, qty) {
   if (tabIsNot('scan')) switchTab('scan');
   scanQueue = scanQueue.then(async () => {
     finalizeUndo();
     const item = (await loadCfStock()).find(s => s.id === id);
     if (!item) return;
-    await recordExit(item.codePhysique || item.codeFacture || '', item.nom, item, cfPickerAction === 'ouverture');
+    const code = item.codePhysique || item.codeFacture || '';
+    if (kind === 'ouverture') await recordExit(code, item.nom, item, true);
+    else await recordExit(code, item.nom, item, false, { kind, qty });
   });
 }
-function closeCfPickerModal() { document.getElementById('cf-picker-modal').style.display = 'none'; }
+
+function closeCfPickerModal() { cfLot = null; document.getElementById('cf-picker-modal').style.display = 'none'; }
 function closeCfPickerOverlay(e) { if (e.target.id === 'cf-picker-modal') closeCfPickerModal(); }
+
+// ═══════════════════════════════════════
+// ALERTES DLC — bandeau de l'accueil
+// ═══════════════════════════════════════
+function daysLeft(dlc) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(dlc + 'T00:00:00') - today) / 86400000);
+}
+// 'expired' : dépassée · 'urgent' : aujourd'hui ou demain · 'soon' : dans 2 ou 3 jours · 'ok'
+function dlcLevel(dlc) {
+  if (!dlc) return 'ok';
+  const d = daysLeft(dlc);
+  return d < 0 ? 'expired' : d <= 1 ? 'urgent' : d <= 3 ? 'soon' : 'ok';
+}
+function dlcText(dlc) {
+  if (!dlc) return 'Sans DLC';
+  const d = daysLeft(dlc);
+  const f = formatDlcDisplay(dlc);
+  if (d < 0) return `🔴 DLC ${f} — dépassée de ${-d} j`;
+  if (d === 0) return `🔴 DLC aujourd'hui`;
+  if (d === 1) return `🟠 DLC demain`;
+  if (d <= 3) return `🟡 DLC ${f} (${d} j)`;
+  return `DLC ${f}`;
+}
+
+function renderDlcBanner() {
+  const el = document.getElementById('dlc-banner');
+  if (!el || !cfStock) return;
+  const count = lvl => cfStock.filter(s => dlcLevel(s.dlc) === lvl).length;
+  const [expired, urgent, soon] = [count('expired'), count('urgent'), count('soon')];
+  if (!expired && !urgent && !soon) { el.innerHTML = ''; el.className = 'dlc-banner'; return; }
+  const parts = [];
+  if (expired) parts.push(`🔴 <strong>${expired}</strong> périmé${expired > 1 ? 's' : ''}`);
+  if (urgent) parts.push(`🟠 <strong>${urgent}</strong> DLC aujourd'hui / demain`);
+  if (soon) parts.push(`🟡 <strong>${soon}</strong> sous 3 jours`);
+  el.className = `dlc-banner visible ${expired || urgent ? 'hot' : ''}`;
+  el.innerHTML = `<span>${parts.join(' · ')}</span><span class="dlc-banner-go">Voir ›</span>`;
+}
 
 const tabIsNot = t => document.querySelector('.tab.active')?.dataset.tab !== t;
 
@@ -490,6 +610,7 @@ function renderCfAddSearch() {
              oninput="renderCfAddList()" onkeydown="if(event.key==='Enter') cfAddEnter()">
     </div>
     <div class="cf-add-hint" id="cf-add-hint">📡 Tu peux aussi scanner l'étiquette du produit.</div>
+    <div id="cf-add-recents"></div>
     <div id="cf-add-list"></div>`;
   renderCfAddList();
 }
@@ -502,8 +623,23 @@ function cfAddMatches(q) {
     .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
 }
 
+// Derniers articles rangés (sur cette tablette), en gros boutons
+const RECENTS_KEY = 'sb_cf_recents';
+function cfRecents() {
+  try { return (JSON.parse(localStorage.getItem(RECENTS_KEY)) || []).filter(c => produitsDict[c]); } catch { return []; }
+}
+function pushCfRecent(code) {
+  const list = [code, ...cfRecents().filter(c => c !== code)].slice(0, 8);
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list)); } catch {}
+}
+
 function renderCfAddList() {
   const q = (document.getElementById('cf-add-search')?.value || '').trim();
+  const recents = q ? [] : cfRecents();
+  document.getElementById('cf-add-recents').innerHTML = recents.length ? `
+    <div class="cf-add-hint">Derniers rangés :</div>
+    <div class="recent-grid">${recents.map(c => `<button class="recent-btn" onclick="cfAddChoose(${jsArg(c)})">${esc(nomOf(produitsDict[c]) || c)}</button>`).join('')}</div>
+    <div class="cf-add-hint">Tous les articles :</div>` : '';
   const matches = cfAddMatches(q);
   const exact = matches.some(a => a.nom.toLowerCase() === q.toLowerCase());
   const create = q && !exact
@@ -554,7 +690,7 @@ async function cfAddChoose(code, isNew = false) {
   document.activeElement?.blur();
   const a = { code, nom: nomOf(produitsDict[code]) || code, isNew, dlc: null, qty: 1 };
   cfAdd = a;
-  const dlc = await pickDlc('DLC du lot', a.nom);
+  const dlc = await pickDlc('DLC du lot', esc(a.nom));
   if (cfAdd !== a) return; // fenêtre fermée entre-temps
   if (!dlc) { cfAdd = null; renderCfAddSearch(); return; }
   a.dlc = dlc;
@@ -588,7 +724,7 @@ function renderCfAddForm() {
 }
 
 async function cfAddChangeDlc() {
-  const dlc = await pickDlc('DLC du lot', cfAdd?.nom || '');
+  const dlc = await pickDlc('DLC du lot', esc(cfAdd?.nom || ''));
   if (!dlc || !cfAdd) return;
   cfAdd.dlc = dlc;
   renderCfAddForm();
@@ -604,9 +740,11 @@ async function cfAddConfirm() {
   if (!a || !a.dlc) return;
   closeCfAdd();
   finalizeUndo();
-  // Étiquette maison : on propose de l'imprimer tout de suite, pour pouvoir la scanner à la sortie
+  pushCfRecent(a.code);
+  // Étiquette maison : on propose de l'imprimer tout de suite (avec la DLC), pour pouvoir la scanner à la sortie
+  const today = localDateStr(new Date());
   const print = a.code.startsWith('BA')
-    ? `<button class="btn-print" style="margin-top:10px;" onclick="showBarcode(${jsArg(a.code)}, ${jsArg(a.nom)});printBarcode()">🖨️ Imprimer l'étiquette</button>`
+    ? `<button class="btn-print" style="margin-top:10px;" onclick="printLotLabels(${jsArg(a.code)}, ${jsArg(a.nom)}, ${jsArg(a.dlc)}, ${jsArg(today)}, ${a.qty})">🖨️ Imprimer ${a.qty > 1 ? `les ${a.qty} étiquettes` : "l'étiquette"}</button>`
     : '';
   await addToColdStorageWithDlc(a.code, a.nom, a.dlc, a.qty, print);
 }
@@ -621,7 +759,7 @@ async function renderRecent() {
   const last = today.slice(-6).reverse();
   el.innerHTML = `<div class="recent-title">Aujourd'hui · ${today.length} scan${today.length > 1 ? 's' : ''}</div>
     ${last.map(e => `<div class="recent-item">
-      <span>${e.action === 'ouverture' ? '🍽️ ' : ''}${esc(e.nom)}</span><span class="recent-time">${esc(e.heure)}</span>
+      <span>${actionIcon(e)}${esc(e.nom)}${e.qty > 1 ? ` ×${e.qty}` : ''}</span><span class="recent-time">${esc(e.heure)}</span>
     </div>`).join('')}`;
 }
 
@@ -662,10 +800,13 @@ async function showDay(date) {
     </div>`;
 }
 
+const ACTION_ICONS = { ouverture: '🍽️ ', perte: '🗑️ ', congelation: '❄️ ' };
+const actionIcon = e => ACTION_ICONS[e.action] || '';
+
 function renderEntry(e) {
   return `<div class="entry-card">
     <div class="entry-top">
-      <div class="entry-name">${e.action === 'ouverture' ? '🍽️ ' : ''}${esc(e.nom)}</div>
+      <div class="entry-name">${actionIcon(e)}${esc(e.nom)}${e.qty > 1 ? ` ×${e.qty}` : ''}</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <div class="entry-time">${esc(e.heure)}</div>
         <button class="btn-edit" onclick="renameProduct(${jsArg(e.code)}, ${jsArg(e.nom || '')})">✏️</button>
@@ -766,6 +907,24 @@ function printBarcode() {
       <div style="font-family:monospace;font-size:12px;margin-top:6px;color:#666;">${esc(code)}</div>
     </div>`;
   JsBarcode('#print-barcode-svg', code, { format: 'CODE128', width: 3, height: 80, displayValue: false, margin: 10 });
+  doPrint();
+}
+
+// Étiquettes d'un lot : nom, code-barres, DLC et date d'entrée — une par pièce
+function printLotLabels(code, nom, dlc, dateEntree, copies = 1) {
+  const n = Math.max(1, Math.min(copies, 50));
+  document.getElementById('print-area').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:16px;padding:20px;">${
+    Array.from({ length: n }, (_, i) => `
+    <div style="text-align:center;border:1px solid #ccc;border-radius:8px;padding:12px;min-width:200px;font-family:sans-serif;">
+      <div style="font-size:16px;font-weight:700;margin-bottom:6px;">${esc(nom)}</div>
+      <svg id="lot-svg-${i}"></svg>
+      <div style="font-size:15px;font-weight:700;margin-top:4px;">DLC ${esc(formatDlcDisplay(dlc))}</div>
+      ${dateEntree ? `<div style="font-size:12px;color:#444;">Entré le ${esc(formatDlcDisplay(dateEntree))}</div>` : ''}
+      <div style="font-family:monospace;font-size:10px;color:#666;margin-top:2px;">${esc(code)}</div>
+    </div>`).join('')}</div>`;
+  for (let i = 0; i < n; i++) {
+    JsBarcode('#lot-svg-' + i, code, { format: 'CODE128', width: 2, height: 50, displayValue: false, margin: 6 });
+  }
   doPrint();
 }
 
@@ -886,6 +1045,25 @@ function daysAgo(dateStr) {
   return `Il y a ${diff} jours`;
 }
 
+// Passage chambre froide → congélateur : une ligne par pièce ; renvoie les id (pour « Annuler »)
+async function addToFreezer(nom, code, qty = 1) {
+  freezerItems = (await Store.load('congelateur.json')) || [];
+  const date = localDateStr(new Date());
+  const ids = [];
+  for (let i = 0; i < qty; i++) {
+    const id = 'fz_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    freezerItems.unshift({ id, nom, code: code || '', date });
+    ids.push(id);
+  }
+  await saveFreezerJson();
+  return ids;
+}
+
+async function removeFromFreezer(ids) {
+  freezerItems = ((await Store.load('congelateur.json')) || []).filter(f => !ids.includes(f.id));
+  await saveFreezerJson();
+}
+
 async function addFreezerItem(nom, code) {
   freezerItems.unshift({ nom, code: code || '', date: localDateStr(new Date()) });
   await saveFreezerJson();
@@ -1000,7 +1178,25 @@ async function loadSettings() {
       </div>
     </div>
 
+    <div class="settings-card">
+      <h3>🔔 Rappel DLC du matin</h3>
+      <div class="settings-desc">Chaque jour à <strong>${esc(s.dlcAlarmTime || '7h20')}</strong>, une notification liste les lots de la chambre froide
+        dont la DLC est dépassée, aujourd'hui ou demain. Rien n'est envoyé s'il n'y en a pas.</div>
+      ${perm(s.notificationsGranted, 'Notifications', 'Sans elles, le rappel ne peut pas s’afficher', 'askNotifications()')}
+      ${perm(s.exactAlarmAllowed, 'Heure exacte', 'Sinon Android peut le décaler de quelques minutes', 'Native.plugin.openExactAlarmSettings()')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-action secondary" onclick="testDlcAlert()">🔔 Tester maintenant</button>
+      </div>
+    </div>
+
     ${dataCardHtml(counts, last)}`;
+}
+
+async function testDlcAlert() {
+  const r = await Native.plugin.testDlcAlert().catch(() => null);
+  if (!r) showToast('Test impossible', 'error');
+  else if (!r.count) showToast('Aucun lot à DLC courte — pas de notification', 'success');
+  else showToast(`Notification envoyée (${r.count} lot${r.count > 1 ? 's' : ''}) ✓`, 'success');
 }
 
 function dataCardHtml(counts, last) {
@@ -1112,12 +1308,21 @@ window.addEventListener('load', async () => {
   ScanCapture.start(onBarcode);
   renderModeContext();
   renderRecent();
+  await loadCfStock();
+  renderDlcBanner();
+  // Le bandeau change avec la date : on le recalcule régulièrement (l'app reste ouverte des jours)
+  setInterval(renderDlcBanner, 15 * 60 * 1000);
 
   // Arrivée depuis une autre page : scan à traiter, ou réglages demandés
   const hash = decodeURIComponent(location.hash.slice(1));
   history.replaceState(null, '', location.pathname);
   if (hash.startsWith('scan=')) { queueScan(hash.slice(5)); }
+  else if (hash.startsWith('lot=')) { openCfPicker('sortie'); pickCfItem(hash.slice(4)); }
+  else if (hash === 'dlc') { openCfPicker('sortie', 'urgent'); }
   else if (hash === 'reglages') { switchTab('settings'); }
+  else if (await Native.plugin?.takeDlcAlert().then(r => r.opened).catch(() => false)) {
+    openCfPicker('sortie', 'urgent'); // ouverte depuis le rappel DLC du matin
+  }
   else {
     // Première ouverture sur la tablette : on commence par les réglages
     const s = await Native.status().catch(() => null);
@@ -1132,8 +1337,13 @@ window.addEventListener('load', async () => {
 
 // Retour au premier plan (douchette connectée, ou retour depuis les réglages Android)
 Native.onResume(() => {
+  renderDlcBanner();
   if (document.querySelector('.tab.active')?.dataset.tab === 'settings') loadSettings();
   else renderRecent();
+});
+if (Native.available) Native.plugin.addListener('dlcAlertOpened', () => {
+  if (tabIsNot('scan')) switchTab('scan');
+  openCfPicker('sortie', 'urgent');
 });
 Native.onScannerConnected(() => {
   const tab = document.querySelector('.tab.active')?.dataset.tab;

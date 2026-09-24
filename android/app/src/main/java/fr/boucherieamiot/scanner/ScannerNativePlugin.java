@@ -77,6 +77,10 @@ public class ScannerNativePlugin extends Plugin {
         if (intent.getBooleanExtra(MainActivity.EXTRA_FROM_SCANNER, false)) {
             notifyListeners("scannerConnected", new JSObject());
         }
+        if (intent.getBooleanExtra(MainActivity.EXTRA_DLC_ALERT, false)) {
+            MainActivity.pendingDlcAlert = false;
+            notifyListeners("dlcAlertOpened", new JSObject());
+        }
     }
 
     // ═══ FICHIERS (dossier privé de l'app) ═══
@@ -229,6 +233,8 @@ public class ScannerNativePlugin extends Plugin {
         PowerManager pm = c.getSystemService(PowerManager.class);
         r.put("batteryUnrestricted", pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName()));
         r.put("androidVersion", Build.VERSION.RELEASE);
+        r.put("exactAlarmAllowed", DlcAlarm.exactAllowed(c));
+        r.put("dlcAlarmTime", String.format(java.util.Locale.FRANCE, "%dh%02d", DlcAlarm.HOUR, DlcAlarm.MINUTE));
         call.resolve(r);
     }
 
@@ -281,6 +287,31 @@ public class ScannerNativePlugin extends Plugin {
         Prefs.setKeepScreenOn(getContext(), on);
         if (getActivity() instanceof MainActivity) ((MainActivity) getActivity()).applyKeepScreenOn(on);
         call.resolve();
+    }
+
+    // ═══ RAPPEL DLC DU MATIN ═══
+
+    /** App ouverte à froid depuis la notification DLC ? (le drapeau est consommé) */
+    @PluginMethod
+    public void takeDlcAlert(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("opened", MainActivity.pendingDlcAlert);
+        MainActivity.pendingDlcAlert = false;
+        call.resolve(r);
+    }
+
+    /** Lance la vérification tout de suite (bouton « Tester » des réglages). */
+    @PluginMethod
+    public void testDlcAlert(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("count", DlcAlarm.check(getContext()));
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void openExactAlarmSettings(PluginCall call) {
+        openSettings(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:" + getContext().getPackageName())), call);
     }
 
     // ═══ IMPRESSION (window.print n'existe pas dans la WebView) ═══

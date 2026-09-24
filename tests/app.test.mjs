@@ -451,6 +451,8 @@ test('sortie sans scanner : lot choisi dans la liste (même sans code-barres) �
   const row = [...doc.querySelectorAll('.cf-picker-item')].find(r => r.textContent.includes('Boudin blanc'));
   assert.match(row.textContent, /entré le 20\/09\/2026/);
   row.click();
+  await sleep(20);
+  doc.getElementById('lot-sortie').click();
   await sleep(80);
   assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'm1'), undefined);
   const hist = read(win, `jours/${today()}.json`);
@@ -496,4 +498,181 @@ test('chambre froide : chaque lot affiche sa date d\'entrée, les lots sans date
   assert.equal(after.find(s => s.id === 'old1').dateEntree, '2026-09-10');
   assert.equal(after.find(s => s.id === 'old2').dateEntree, '2026-09-15');
   assert.deepEqual(errors, []);
+});
+
+// ── Bandeau DLC, fiche de lot (quantité, jeté, congeler), récents, tri/recherche ──
+const inDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+async function storageWithLots(lots) {
+  const storage = await seededStorage();
+  const stock = JSON.parse(storage['sbf:data/chambre-froide.json']);
+  stock.push(...lots);
+  storage['sbf:data/chambre-froide.json'] = JSON.stringify(stock);
+  return storage;
+}
+
+test('bandeau DLC : périmés / aujourd\'hui-demain / sous 3 jours, appui → liste des lots concernés', async () => {
+  const { win, doc, errors } = await openPage('index.html', await storageWithLots([
+    { id: 'e1', nom: 'Merguez', dlc: inDays(-1), qty: 2, dateEntree: '2026-09-01' },
+    { id: 'u1', nom: 'Chipolatas', dlc: inDays(1), qty: 1, dateEntree: '2026-09-01' },
+    { id: 's1', nom: 'Boudin', dlc: inDays(3), qty: 1, dateEntree: '2026-09-01' },
+  ]));
+  const banner = doc.getElementById('dlc-banner');
+  assert.ok(banner.classList.contains('visible') && banner.classList.contains('hot'));
+  assert.match(banner.textContent, /1 périmé/);
+  assert.match(banner.textContent, /1 DLC aujourd'hui \/ demain/);
+  assert.match(banner.textContent, /1 sous 3 jours/);
+  banner.click();
+  await sleep(30);
+  const names = [...doc.querySelectorAll('.cf-picker-item-nom')].map(e => e.textContent);
+  assert.equal(names.length, 3, 'seulement les lots urgents');
+  assert.match(names[0], /Merguez/, 'le plus urgent en premier');
+
+  // Jeter le lot périmé en entier
+  doc.querySelector('.cf-picker-item').click();
+  await sleep(20);
+  [...doc.querySelectorAll('.qty-all')][0].click();
+  doc.getElementById('lot-perte').click();
+  await sleep(80);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'e1'), undefined);
+  const h = read(win, `jours/${today()}.json`)[0];
+  assert.equal(h.action, 'perte');
+  assert.equal(h.qty, 2);
+  assert.match(doc.getElementById('result-area').textContent, /2 jetés \(perte\)/);
+  assert.doesNotMatch(banner.textContent, /périmé/, 'bandeau mis à jour');
+  assert.match(doc.getElementById('recent-list').textContent, /🗑️ Merguez ×2/);
+  assert.deepEqual(errors, []);
+});
+
+test('fiche de lot : sortir 2 pièces d\'un coup, annuler remet les 2', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.getElementById('cf-out-tile').click();
+  await sleep(20);
+  [...doc.querySelectorAll('.cf-picker-item')].find(r => r.textContent.includes('Jambon cru')).click();
+  await sleep(20);
+  win.lotStep(1);
+  doc.getElementById('lot-sortie').click();
+  await sleep(80);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').qty, 1);
+  assert.equal(read(win, `jours/${today()}.json`)[0].qty, 2);
+  doc.querySelector('.btn-undo').click();
+  await sleep(80);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').qty, 3);
+  assert.equal(read(win, `jours/${today()}.json`).length, 0);
+});
+
+test('fiche de lot : congeler → retiré de la chambre froide, ajouté au congélateur, annulable', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.getElementById('cf-out-tile').click();
+  await sleep(20);
+  [...doc.querySelectorAll('.cf-picker-item')].find(r => r.textContent.includes('Jambon cru')).click();
+  await sleep(20);
+  win.lotStep(1);
+  doc.getElementById('lot-congelation').click();
+  await sleep(80);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').qty, 1);
+  let fz = read(win, 'congelateur.json');
+  assert.equal(fz.filter(f => f.nom === 'Jambon cru' && f.date === today()).length, 2);
+  assert.equal(fz.length, 3, 'l\'ancien contenu du congélateur est gardé');
+  assert.equal(read(win, `jours/${today()}.json`)[0].action, 'congelation');
+  doc.querySelector('.btn-undo').click();
+  await sleep(80);
+  fz = read(win, 'congelateur.json');
+  assert.equal(fz.length, 1);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').qty, 3);
+});
+
+test('page chambre froide : appui sur un lot → corriger la DLC / la date d\'entrée, ou aller le sortir', async () => {
+  const storage = await seededStorage();
+  const { win, doc, errors } = await openPage('chambre-froide.html', storage);
+  const openJambon = () => [...doc.querySelectorAll('.stock-item-info')].find(e => e.textContent.includes('Jambon cru')).click();
+  openJambon();
+  assert.match(doc.querySelector('.lot-edit-overlay').textContent, /01\/02\/2099/);
+
+  // DLC mal importée : on peut la corriger, même vers une date passée
+  doc.querySelector('.lot-edit-dlc').click();
+  await sleep(20);
+  const input = [...doc.querySelectorAll('.dlc-picker .dlc-date-input')].at(-1);
+  assert.equal(input.value, '2099-02-01', 'DLC actuelle proposée');
+  assert.equal(input.getAttribute('min'), null, 'date passée permise pour une correction');
+  input.value = '2026-09-20';
+  [...doc.querySelectorAll('.dlc-picker .dlc-ok')].at(-1).click();
+  await sleep(50);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').dlc, '2026-09-20');
+  assert.match(doc.querySelector('.lot-edit-overlay').textContent, /20\/09\/2026/, 'fiche mise à jour');
+
+  // Date d'entrée
+  doc.querySelector('.lot-edit-entree').click();
+  await sleep(20);
+  [...doc.querySelectorAll('.dlc-picker .dlc-date-input')].at(-1).value = '2026-09-18';
+  [...doc.querySelectorAll('.dlc-picker .dlc-ok')].at(-1).click();
+  await sleep(50);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === 'cf_3').dateEntree, '2026-09-18');
+
+  // Sortir, jeter, congeler : fiche du lot sur l'accueil
+  let target = null;
+  win.openLot = id => { target = id; }; // la navigation n'existe pas dans jsdom
+  doc.querySelector('.lot-edit-out').click();
+  assert.equal(target, 'cf_3');
+  assert.deepEqual(errors, []);
+
+  // Pas de collision avec le bouton vert « OK » du choix de DLC (fond vert illisible)
+  assert.equal(doc.querySelectorAll('.stock-item.dlc-ok').length, 0);
+
+  // Arrivée sur l'accueil avec #lot=…
+  const dom2 = await (async () => {
+    const r = await openPage('index.html', storage);
+    return r;
+  })();
+  dom2.win.openCfPicker('sortie');
+  await sleep(20);
+  dom2.win.pickCfItem('cf_3');
+  assert.ok(dom2.doc.getElementById('lot-sortie'));
+  assert.match(dom2.doc.getElementById('cf-picker-list').textContent, /3 en stock/);
+});
+
+test('page chambre froide : recherche et tri (mémorisé)', async () => {
+  const storage = await storageWithLots([{ id: 'n1', nom: 'Andouillette', dlc: '2099-06-01', qty: 1, dateEntree: '2026-09-23' }]);
+  const { win, doc } = await openPage('chambre-froide.html', storage);
+  const names = () => [...doc.querySelectorAll('.stock-item-name')].map(e => e.textContent);
+  assert.equal(names()[0], 'Faux-filet', 'par DLC par défaut');
+  win.setStockSort('nom');
+  assert.equal(names()[0], 'Andouillette');
+  win.setStockSort('entree');
+  assert.equal(names()[0], 'Andouillette', 'entrée la plus récente en premier');
+  const search = doc.getElementById('stock-search');
+  search.value = 'faux';
+  search.dispatchEvent(new win.Event('input'));
+  assert.deepEqual(names(), ['Faux-filet', 'Faux-filet']);
+  assert.match(doc.querySelector('.stock-count').textContent, /2 sur 4/);
+  assert.equal(win.localStorage.getItem('sb_cf_sort'), 'entree');
+});
+
+test('mettre en chambre froide : derniers articles rangés proposés en gros boutons', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  doc.querySelector('.cf-add-tile').click();
+  assert.equal(doc.querySelectorAll('.recent-btn').length, 0);
+  win.cfAddChoose('3700001');
+  await sleep(20);
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(20);
+  doc.getElementById('cf-add-confirm').click();
+  await sleep(50);
+  doc.querySelector('.cf-add-tile').click();
+  const btns = [...doc.querySelectorAll('.recent-btn')];
+  assert.equal(btns.length, 1);
+  assert.equal(btns[0].textContent, 'Saucisson sec');
+  // Un appui → DLC directement
+  btns[0].click();
+  await sleep(20);
+  assert.equal(doc.querySelector('.dlc-picker-sub').textContent, 'Saucisson sec');
+});
+
+test('étiquette de lot : DLC et date d\'entrée imprimées, une par pièce', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  win.printLotLabels('BA12AB', 'Pâté maison', '2099-01-05', '2026-09-24', 3);
+  const area = doc.getElementById('print-area');
+  assert.equal(area.querySelectorAll('svg').length, 3);
+  assert.match(area.textContent, /DLC 05\/01\/2099/);
+  assert.match(area.textContent, /Entré le 24\/09\/2026/);
 });

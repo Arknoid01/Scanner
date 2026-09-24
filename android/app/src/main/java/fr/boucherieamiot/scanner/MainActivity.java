@@ -11,6 +11,9 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     static final String EXTRA_FROM_SCANNER = "fromScanner";
+    static final String EXTRA_DLC_ALERT = "dlcAlert";
+    /** Ouverte depuis le rappel DLC : la page affichera les lots concernés. */
+    static volatile boolean pendingDlcAlert = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -18,6 +21,8 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         applyKeepScreenOn(Prefs.keepScreenOn(this));
         handleScannerIntent(getIntent());
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_DLC_ALERT, false)) pendingDlcAlert = true;
+        DlcAlarm.schedule(this);
 
         // Retour : page précédente dans l'app ; sur la page d'accueil, on met l'app en arrière-plan
         // au lieu de la fermer (elle reste prête pour le prochain scan)

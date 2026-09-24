@@ -101,6 +101,7 @@ const Store = (() => {
     const date = entry.date || localDateStr(now);
     const e = { heure: entry.heure || now.toTimeString().slice(0, 5), code: entry.code, nom: entry.nom };
     if (entry.action) e.action = entry.action;
+    if (entry.qty > 1) e.qty = entry.qty;
     e.id = 'h_' + now.getTime() + '_' + Math.random().toString(36).slice(2, 6);
     const entries = await loadDay(date);
     entries.push(e);

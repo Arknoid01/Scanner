@@ -197,3 +197,43 @@ button, .tab, .header-link { touch-action: manipulation; }
 @media (max-width: 560px) { .action-grid { grid-template-columns: 1fr; } }
 .cf-add-tile.out { background: rgba(37,99,235,.12); border-color: rgba(59,130,246,.5); color: #93c5fd; }
 .cf-add-tile.out:active { background: rgba(37,99,235,.25); }
+
+/* ── Bandeau d'alerte DLC (accueil) ── */
+.dlc-banner { display: none; }
+.dlc-banner.visible {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: 14px; cursor: pointer; font-size: 15px;
+  background: rgba(245,158,11,.12); border: 2px solid rgba(245,158,11,.5); color: #fbbf24;
+}
+.dlc-banner.visible.hot { background: rgba(230,57,70,.14); border-color: rgba(230,57,70,.6); color: #ff8a8a; }
+.dlc-banner-go { font-weight: 700; white-space: nowrap; }
+
+/* Liste des lots : couleur selon la DLC */
+.cf-picker-item { padding-top: 12px !important; padding-bottom: 12px !important; }
+.cf-picker-item.lvl-expired, .cf-picker-item.lvl-urgent { border-left: 4px solid #e63946; }
+.cf-picker-item.lvl-soon { border-left: 4px solid #f59e0b; }
+.cf-picker-qty { color: #7dd3fc; font-family: monospace; font-size: 13px; }
+.cf-picker-item-meta.lvl-expired, .cf-picker-item-meta.lvl-urgent { color: #ff8a8a; }
+.cf-picker-item-meta.lvl-soon { color: #fbbf24; }
+
+/* Fiche d'un lot : actions */
+.lot-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lot-btn {
+  min-height: 64px; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit;
+  background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 2px solid var(--border, #2e2e4a);
+}
+.lot-btn.out { background: rgba(37,99,235,.25); border-color: #3b82f6; }
+.lot-btn.waste { background: rgba(230,57,70,.18); border-color: #e63946; }
+.lot-btn.freeze { background: rgba(125,211,252,.12); border-color: #7dd3fc; }
+.qty-stepper .qty-all { width: auto; padding: 0 14px; font-size: 14px; }
+
+/* Articles récents (Mettre en chambre froide) */
+.recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; padding: 0 16px 8px; }
+.recent-btn {
+  min-height: 56px; padding: 8px 10px; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+  font-family: inherit; background: rgba(45,198,83,.1); color: var(--text, #f0ece4); border: 1px solid rgba(45,198,83,.4);
+}
+
+/* Fiche de correction d'un lot (page Chambre froide) */
+.lot-edit-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 16px; }
+.lot-edit-row .dlc-ok { padding: 10px 16px; }

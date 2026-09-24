@@ -67,7 +67,8 @@ window.addEventListener('load', refreshScannerPill);
 
 // ── Sélecteur de DLC : boutons rapides + calendrier ──
 // Renvoie une promesse : 'AAAA-MM-JJ' ou null si annulé.
-function pickDlc(title = 'Choisir la DLC', subtitle = '') {
+// opts.allowPast : correction d'une DLC déjà saisie (dates passées permises) ; opts.value : date actuelle
+function pickDlc(title = 'Choisir la DLC', subtitle = '', opts = {}) {
   return new Promise((resolve) => {
     const quick = [3, 5, 7, 10, 14, 21];
     const today = new Date();
@@ -85,7 +86,7 @@ function pickDlc(title = 'Choisir la DLC', subtitle = '') {
           }).join('')}
         </div>
         <div class="dlc-picker-row">
-          <input type="date" class="dlc-date-input" min="${localDateStr(today)}">
+          <input type="date" class="dlc-date-input" ${opts.allowPast ? '' : `min="${localDateStr(today)}"`} value="${opts.value || ''}">
           <button class="dlc-ok">OK</button>
         </div>
         <button class="dlc-cancel">Annuler</button>
