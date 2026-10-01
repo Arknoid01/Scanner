@@ -1,0 +1,22 @@
+{
+  "name": "scanner-boucherie",
+  "version": "1.0.0",
+  "description": "Scanner Boucherie Amiot — app Android autonome (Capacitor)",
+  "private": true,
+  "scripts": {
+    "serve": "python3 -m http.server 8124 --directory www",
+    "test": "node --test --test-force-exit tests/*.test.mjs",
+    "sync": "cap sync android",
+    "apk": "cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "jsbarcode": "^3.11.5",
+    "jszip": "^3.10.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "jsdom": "^30.1.1"
+  }
+}

@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a1628">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Chambre Froide — Boucherie Amiot</title>
+<style>
+  :root {
+    --bg:       #0a1628;
+    --surface:  #0f1e35;
+    --surface2: #162540;
+    --border:   #1e3355;
+    --blue:     #2563eb;
+    --blue-dim: #1e3a6e;
+    --ice:      #7dd3fc;
+    --ice-dim:  #38607a;
+    --text:     #e2eaf4;
+    --text-dim: #6b8aaa;
+    --green:    #22c55e;
+    --yellow:   #f59e0b;
+    --red:      #ef4444;
+    --font:     'Space Grotesk', sans-serif;
+    --mono:     'Space Mono', monospace;
+    --radius:   12px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Ambiance froide subtile */
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(ellipse at 30% 20%, rgba(37,99,235,.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, rgba(125,211,252,.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 12px; }
+
+  .back-btn {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 18px;
+    line-height: 1;
+    transition: color .2s;
+  }
+  .back-btn:hover { color: var(--ice); }
+
+  .logo {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.3px;
+  }
+  .logo span { color: var(--ice); }
+
+  .temp-badge {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ice);
+    background: var(--blue-dim);
+    border: 1px solid var(--ice-dim);
+    border-radius: 100px;
+    padding: 4px 10px;
+  }
+
+  #btn-auth {
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity .2s;
+  }
+  #btn-auth:hover { opacity: .85; }
+  #btn-auth.connected { background: var(--surface2); border: 1px solid var(--border); color: var(--green); }
+
+  /* ─── TABS ─── */
+  .tabs {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    z-index: 1;
+  }
+  .tab {
+    flex: 1;
+    padding: 12px 8px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all .2s;
+    user-select: none;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+  }
+  .tab.active { color: var(--ice); border-bottom-color: var(--ice); }
+
+  /* ─── PAGES ─── */
+  .page { display: none; flex: 1; flex-direction: column; padding: 16px; gap: 14px; position: relative; z-index: 1; }
+  .page.active { display: flex; }
+
+  /* ─── CARDS ─── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+  }
+
+  /* ─── BOUTONS ─── */
+  .btn-primary {
+    width: 100%;
+    padding: 13px;
+    background: var(--blue);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity .2s;
+    letter-spacing: .2px;
+  }
+  .btn-primary:hover { opacity: .88; }
+  .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+  .btn-secondary {
+    width: 100%;
+    padding: 12px;
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: border-color .2s;
+  }
+  .btn-secondary:hover { border-color: var(--ice); }
+
+  .btn-ice {
+    width: 100%;
+    padding: 13px;
+    background: var(--blue-dim);
+    color: var(--ice);
+    border: 1px solid var(--ice-dim);
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: opacity .2s;
+  }
+  .btn-ice:hover { opacity: .85; }
+
+  /* ─── INPUT ─── */
+  .input-field {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    color: var(--text);
+    font-size: 15px;
+    font-family: var(--font);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .input-field:focus { border-color: var(--ice); }
+  .input-field::placeholder { color: var(--text-dim); }
+
+  .input-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .input-group { display: flex; flex-direction: column; gap: 4px; }
+
+  /* ─── STOCK LIST ─── */
+  .stock-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .stock-count {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+  .stock-alerts {
+    display: flex;
+    gap: 8px;
+  }
+  .alert-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 100px;
+  }
+  .alert-badge.red { background: rgba(239,68,68,.15); color: var(--red); border: 1px solid rgba(239,68,68,.3); }
+  .alert-badge.yellow { background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+
+  .stock-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .stock-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: border-color .2s;
+  }
+  .stock-item.lot-ok { border-left: 3px solid var(--green); }
+  .stock-item.lot-warn { border-left: 3px solid var(--yellow); }
+  .stock-item.lot-danger { border-left: 3px solid var(--red); }
+  .stock-item.lot-expired { border-left: 3px solid var(--red); background: rgba(239,68,68,.05); }
+
+  .stock-item-info { flex: 1; min-width: 0; }
+  .stock-item-name {
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stock-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+  .stock-item-dlc {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 700;
+  }
+  .lot-ok .stock-item-dlc { background: rgba(34,197,94,.15); color: var(--green); }
+  .lot-warn .stock-item-dlc { background: rgba(245,158,11,.15); color: var(--yellow); }
+  .lot-danger .stock-item-dlc { background: rgba(239,68,68,.15); color: var(--red); }
+  .lot-expired .stock-item-dlc { background: rgba(239,68,68,.2); color: var(--red); }
+
+  .stock-tools { display: flex; flex-direction: column; gap: 10px; }
+  .sort-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sort-label { font-size: 13px; color: var(--text-dim); }
+  .sort-chip {
+    background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); border-radius: 100px;
+    padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: var(--font);
+  }
+  .sort-chip.active { color: var(--ice); border-color: var(--ice); background: var(--blue-dim); }
+  .stock-item-info { cursor: pointer; }
+  .stock-item-entree {
+    font-size: 12px;
+    color: var(--text);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: var(--font);
+    cursor: pointer;
+  }
+  .stock-item-entree.missing { color: var(--yellow); border-color: rgba(245,158,11,.5); }
+    .stock-item-supplier {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .stock-item-qty {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ice);
+    background: var(--blue-dim);
+    border-radius: 6px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+  .btn-out {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 4px 9px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all .2s;
+    flex-shrink: 0;
+    line-height: 1.2;
+  }
+  .btn-out:hover { border-color: var(--red); color: var(--red); }
+  .btn-add:hover { border-color: var(--green); color: var(--green); }
+
+  /* ─── SCANNER ─── */
+  #scan-reader { width: 100%; border-radius: var(--radius); overflow: hidden; background: #000; }
+  #scan-reader video { width: 100% !important; }
+  #scan-reader__dashboard { display: none !important; }
+
+  /* ─── IMPORT PDF ─── */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+  }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--ice); background: rgba(125,211,252,.04); }
+  .drop-zone-icon { font-size: 32px; margin-bottom: 10px; }
+  .drop-zone-text { font-size: 14px; color: var(--text-dim); }
+  .drop-zone-text strong { color: var(--text); }
+
+  /* ─── IMPORT PREVIEW ─── */
+  .import-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .import-item-info { flex: 1; }
+  .import-item-name { font-size: 14px; font-weight: 600; }
+  .import-item-dlc { font-family: var(--mono); font-size: 11px; color: var(--ice); margin-top: 3px; }
+  .import-item-ean { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .import-item-qty {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ice);
+  }
+  .btn-remove-import {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .btn-remove-import:hover { color: var(--red); }
+
+  /* ─── DLC MANUELLE ─── */
+  .dlc-manual-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  .dlc-manual-row .input-group { flex: 1; }
+
+  /* ─── MAPPING ─── */
+  .mapping-card {
+    background: rgba(37,99,235,.08);
+    border: 1px solid var(--blue-dim);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: none;
+  }
+  .mapping-card.visible { display: block; }
+  .mapping-title { font-size: 13px; font-weight: 700; color: var(--ice); margin-bottom: 10px; }
+  .mapping-desc { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+
+  /* ─── TOAST ─── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 20px;
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+    z-index: 999;
+    white-space: nowrap;
+    font-family: var(--font);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--green); color: var(--green); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+  .toast.warn { border-color: var(--yellow); color: var(--yellow); }
+
+  /* ─── MISC ─── */
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--ice);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading { text-align: center; padding: 30px; color: var(--text-dim); font-size: 14px; }
+  .empty-state { text-align: center; padding: 40px 20px; }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 15px; color: var(--text-dim); }
+
+  .separator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .separator::before, .separator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* ─── LIAISON ─── */
+  .liaison-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .liaison-item.confirmed { border-color: var(--green); }
+  .liaison-item.rejected { opacity: .4; }
+
+  .liaison-facture {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .liaison-facture-code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .liaison-arrow {
+    font-size: 18px;
+    text-align: center;
+    color: var(--ice-dim);
+  }
+  .liaison-physique {
+    font-size: 13px;
+    color: var(--ice);
+    font-weight: 600;
+  }
+  .liaison-physique-code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .liaison-score {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .liaison-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .btn-confirm-liaison {
+    flex: 1;
+    padding: 9px;
+    background: rgba(34,197,94,.15);
+    color: var(--green);
+    border: 1px solid rgba(34,197,94,.3);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .btn-reject-liaison {
+    padding: 9px 12px;
+    background: none;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: var(--font);
+  }
+  .liaison-manual {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .liaison-manual input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+  }
+  .liaison-manual input:focus { border-color: var(--ice); }
+  .btn-link-manual {
+    padding: 8px 12px;
+    background: var(--blue-dim);
+    color: var(--ice);
+    border: 1px solid var(--ice-dim);
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: var(--font);
+  }
+</style>
+</style>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header>
+  <div class="header-left">
+    <a class="back-btn" href="index.html">←</a>
+    <div class="logo">Chambre <span>Froide</span></div>
+    <div class="temp-badge">0–4°C</div>
+  </div>
+  <button id="scanner-pill" class="scanner-pill" onclick="location.href='index.html#reglages'">📡 Douchette ?</button>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="stock" onclick="switchTab('stock')">📦 Stock</div>
+  <div class="tab" data-tab="ajout" onclick="switchTab('ajout')">➕ Ajout manuel</div>
+  <div class="tab" data-tab="liaison" onclick="switchTab('liaison')">🔗 Liaison</div>
+</div>
+
+<!-- ════ STOCK ════ -->
+<div class="page active" id="page-stock">
+  <div class="card" style="font-size:13px;color:var(--text-dim);">
+    📡 Scanner une poche ici l'enregistre en <strong>sortie</strong> (comme sur la page Scanner).
+    Appuie sur un lot pour <strong>corriger sa DLC ou sa date d'entrée</strong>, ou le sortir, le jeter, le congeler.
+  </div>
+  <div class="stock-tools">
+    <input type="text" class="input-field" id="stock-search" placeholder="🔍 Chercher un lot…" oninput="renderStock()" autocomplete="off">
+    <div class="sort-chips">
+      <span class="sort-label">Trier :</span>
+      <button class="sort-chip" data-sort="dlc" onclick="setStockSort('dlc')">DLC</button>
+      <button class="sort-chip" data-sort="nom" onclick="setStockSort('nom')">Nom</button>
+      <button class="sort-chip" data-sort="entree" onclick="setStockSort('entree')">Entrée récente</button>
+    </div>
+  </div>
+  <div id="stock-content"></div>
+</div>
+
+<!-- ════ AJOUT MANUEL ════ -->
+<div class="page" id="page-ajout">
+  <div class="card">
+    <div class="card-title">✏️ Ajouter au stock</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div class="input-group">
+        <label class="input-label">Nom du produit</label>
+        <input type="text" class="input-field" id="manual-nom" placeholder="Ex : Gendarme fumé forêt noire">
+      </div>
+      <div class="row-2">
+        <div class="input-group">
+          <label class="input-label">DLC</label>
+          <button class="btn-secondary" id="manual-dlc-btn" onclick="chooseManualDlc()">📅 Choisir la DLC</button>
+        </div>
+        <div class="input-group">
+          <label class="input-label">Quantité</label>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn-out" onclick="stepQty(-1)">−</button>
+            <input type="number" class="input-field" id="manual-qty" value="1" min="1" style="text-align:center;">
+            <button class="btn-out btn-add" onclick="stepQty(1)">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Fournisseur</label>
+        <input type="text" class="input-field" id="manual-supplier" placeholder="Ex : Chazal" list="supplier-list">
+        <datalist id="supplier-list"></datalist>
+      </div>
+      <button class="btn-primary" onclick="addManualItem()">Ajouter au stock</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">📥 Coller un JSON</div>
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">
+      Colle une liste de lots (même format que la version web) : elle est fusionnée avec le stock, rien n'est écrasé.
+    </p>
+    <button class="btn-ice" onclick="openJsonImport('chambre-froide.json')">📥 Importer un JSON</button>
+  </div>
+</div>
+
+<!-- ════ LIAISON ════ -->
+<div class="page" id="page-liaison">
+  <div class="card">
+    <div class="card-title">🔗 Lier codes-barres et articles</div>
+    <p style="font-size:13px;color:var(--text-dim);">
+      Articles de la chambre froide sans code-barres. Choisis le produit correspondant :
+      ensuite, scanner la poche la sortira automatiquement du stock.
+    </p>
+  </div>
+  <div id="liaison-content"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="vendor/capacitor.js"></script>
+<script src="js/store.js"></script>
+<script src="js/common.js"></script>
+<script src="js/chambre-froide.js"></script>
+</body>
+</html>

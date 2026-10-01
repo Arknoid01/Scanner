@@ -1,0 +1,276 @@
+/* ═══ Composants communs de l'app tablette ═══ */
+
+/* Cibles tactiles confortables sur tablette */
+button, .tab, .header-link { touch-action: manipulation; }
+
+/* ── Pastille douchette ── */
+.scanner-pill {
+  font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid #2e2e4a; background: #22223b; color: #9090a8; white-space: nowrap;
+  cursor: pointer; font-family: inherit;
+}
+.scanner-pill.on { color: #2dc653; border-color: rgba(45,198,83,.5); background: rgba(45,198,83,.1); }
+.scanner-pill.off { color: #f59e0b; border-color: rgba(245,158,11,.5); background: rgba(245,158,11,.1); }
+.scanner-pill.warn { color: #ff6b6b; border-color: rgba(230,57,70,.5); background: rgba(230,57,70,.1); }
+
+/* ── Sélecteur de modes (gros boutons) ── */
+.mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 560px) { .mode-grid { grid-template-columns: repeat(2, 1fr); } }
+.mode-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 84px; padding: 10px 6px; border-radius: 14px; cursor: pointer;
+  background: var(--surface, #1a1a2e); border: 2px solid var(--border, #2e2e4a);
+  color: var(--text-dim, #9090a8); font-family: inherit; font-size: 14px; font-weight: 700;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.mode-btn .mode-icon { font-size: 28px; line-height: 1; }
+.mode-btn .mode-sub { font-size: 11px; font-weight: 500; opacity: .8; }
+.mode-btn.active { color: #fff; }
+.mode-btn[data-mode="sortie"].active { background: rgba(37,99,235,.25); border-color: #3b82f6; }
+.mode-btn[data-mode="viande"].active { background: rgba(230,57,70,.22); border-color: #e63946; }
+.mode-btn[data-mode="dlc"].active { background: rgba(45,198,83,.18); border-color: #2dc653; }
+.mode-btn[data-mode="partiel"].active { background: rgba(245,158,11,.2); border-color: #f59e0b; }
+
+.mode-context {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 12px; background: var(--surface2, #22223b);
+  border: 1px solid var(--border, #2e2e4a); font-size: 14px;
+}
+.mode-context:empty { display: none; }
+.mode-context button {
+  background: var(--surface, #1a1a2e); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+  border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+
+/* ── Zone « prêt à scanner » ── */
+.ready-zone {
+  display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center;
+  padding: 22px 16px; border-radius: 14px; border: 2px dashed var(--border, #2e2e4a);
+  color: var(--text-dim, #9090a8); font-size: 16px; font-weight: 600;
+}
+.ready-zone .ready-dot { width: 12px; height: 12px; border-radius: 50%; background: #2dc653; box-shadow: 0 0 0 0 rgba(45,198,83,.6); animation: pulse 1.8s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(45,198,83,.6); } 70% { box-shadow: 0 0 0 12px rgba(45,198,83,0); } 100% { box-shadow: 0 0 0 0 rgba(45,198,83,0); } }
+.ready-zone.flash { border-color: #2dc653; color: #2dc653; }
+
+/* ── Bouton annuler (après un enregistrement automatique) ── */
+.undo-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.btn-undo {
+  background: transparent; color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+  border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.undo-timer { flex: 1; height: 4px; border-radius: 2px; background: var(--border, #2e2e4a); overflow: hidden; }
+.undo-timer > div { height: 100%; background: var(--text-dim, #9090a8); animation: undo-shrink linear forwards; }
+@keyframes undo-shrink { from { width: 100%; } to { width: 0; } }
+
+/* ── Derniers scans du jour ── */
+.recent-list { display: flex; flex-direction: column; gap: 6px; }
+.recent-title { font-size: 12px; font-weight: 700; color: var(--text-dim, #9090a8); text-transform: uppercase; letter-spacing: .5px; }
+.recent-item {
+  display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface, #1a1a2e); border: 1px solid var(--border, #2e2e4a); font-size: 14px;
+}
+.recent-item .recent-time { color: var(--text-dim, #9090a8); font-variant-numeric: tabular-nums; }
+
+/* ── Sélecteur de DLC ── */
+.dlc-picker-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.dlc-picker {
+  width: 100%; max-width: 520px; background: #1a1a2e; color: #f0ece4; border: 1px solid #2e2e4a;
+  border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.dlc-picker-title { font-size: 18px; font-weight: 700; }
+.dlc-picker-sub { font-size: 14px; color: #9090a8; margin-top: -6px; }
+.dlc-picker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.dlc-quick {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 6px; border-radius: 12px;
+  background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; cursor: pointer; font-family: inherit;
+}
+.dlc-quick strong { font-size: 18px; }
+.dlc-quick span { font-size: 12px; color: #9090a8; }
+.dlc-quick:active { background: #2dc653; color: #0f0f1a; }
+.dlc-picker-row { display: flex; gap: 10px; }
+.dlc-date-input {
+  flex: 1; min-width: 0; background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 12px; font-size: 16px; font-family: inherit; color-scheme: dark;
+}
+.dlc-ok, .dlc-cancel {
+  border-radius: 10px; padding: 12px 18px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+.dlc-ok { background: #2dc653; color: #0f0f1a; border: none; }
+.dlc-cancel { background: transparent; color: #9090a8; border: 1px solid #2e2e4a; }
+
+/* ── Réglages ── */
+.settings-card {
+  background: var(--surface, #1a1a2e); border: 1px solid var(--border, #2e2e4a); border-radius: 14px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.settings-card h3 { font-size: 16px; }
+.settings-desc { font-size: 13px; color: var(--text-dim, #9090a8); line-height: 1.45; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-row .settings-label { font-size: 14px; }
+.settings-row .settings-label small { display: block; color: var(--text-dim, #9090a8); font-size: 12px; margin-top: 2px; }
+.status-ok { color: #2dc653; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.status-ko { color: #f59e0b; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.btn-action {
+  background: var(--accent, #e63946); color: #fff; border: none; border-radius: 10px; padding: 11px 16px;
+  font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.btn-action.secondary { background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a); }
+.device-list { display: flex; flex-direction: column; gap: 8px; }
+.device-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px;
+  border-radius: 10px; background: var(--surface2, #22223b); border: 1px solid var(--border, #2e2e4a); cursor: pointer;
+}
+.device-item.selected { border-color: #2dc653; background: rgba(45,198,83,.1); }
+.device-item small { color: var(--text-dim, #9090a8); font-family: monospace; }
+.switch { position: relative; width: 52px; height: 30px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; border-radius: 15px; background: #2e2e4a; transition: .2s; cursor: pointer; }
+.switch span::before { content: ''; position: absolute; width: 24px; height: 24px; left: 3px; top: 3px; border-radius: 50%; background: #f0ece4; transition: .2s; }
+.switch input:checked + span { background: #2dc653; }
+.switch input:checked + span::before { transform: translateX(22px); }
+
+/* ── Tailles tablette (page Scanner) ── */
+.tab { font-size: 15px; padding: 16px 10px; }
+.header-link { font-size: 14px; padding: 10px 14px; }
+.result-name { font-size: 22px; }
+.btn-save { font-size: 16px; padding: 14px; }
+.name-input { font-size: 17px; }
+.page { max-width: 1000px; width: 100%; margin: 0 auto; }
+#settings-content { display: flex; flex-direction: column; gap: 16px; }
+@media print { body { background: #fff !important; color: #000 !important; } }
+
+/* ── Import JSON copié-collé ── */
+.json-import-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.json-import {
+  width: 100%; max-width: 720px; max-height: 90vh; overflow-y: auto; background: #1a1a2e; color: #f0ece4;
+  border: 1px solid #2e2e4a; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.json-import-target, .json-import-text {
+  width: 100%; background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 12px; font-size: 15px; font-family: inherit;
+}
+.json-import-text { min-height: 220px; font-family: monospace; font-size: 13px; resize: vertical; }
+.json-import-error { color: #ff6b6b; font-size: 14px; font-weight: 600; }
+.json-import-error:empty { display: none; }
+
+/* ── Tuile « Mettre en chambre froide » (accueil) ── */
+.cf-add-tile {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 12px 18px;
+  border-radius: 14px; cursor: pointer; text-align: left; font-family: inherit; font-size: 16px;
+  background: rgba(125,211,252,.08); border: 2px solid rgba(125,211,252,.35); color: #7dd3fc;
+}
+.cf-add-tile .mode-icon { font-size: 30px; line-height: 1; }
+.cf-add-tile .mode-sub { display: block; font-size: 12px; font-weight: 500; color: var(--text-dim, #9090a8); margin-top: 2px; }
+.cf-add-tile:active { background: rgba(125,211,252,.18); }
+
+/* ── Fenêtre « Mettre en chambre froide » ── */
+.cf-add-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--border, #2e2e4a); cursor: pointer; font-size: 15px;
+}
+.cf-add-item small { color: var(--text-dim, #9090a8); font-family: monospace; font-size: 11px; }
+.cf-add-item.create { color: #2dc653; font-weight: 700; }
+.cf-add-hint { padding: 10px 16px; font-size: 13px; color: var(--text-dim, #9090a8); }
+.cf-add-form { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cf-add-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; }
+.qty-stepper { display: flex; align-items: center; gap: 10px; }
+.qty-stepper button {
+  width: 52px; height: 52px; border-radius: 12px; font-size: 24px; font-weight: 700; cursor: pointer;
+  background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.qty-stepper .qty-value { min-width: 48px; text-align: center; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.json-import-date-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 600; flex-wrap: wrap; }
+.json-import-date {
+  background: #22223b; color: #f0ece4; border: 1px solid #2e2e4a; border-radius: 10px;
+  padding: 10px 12px; font-size: 16px; font-family: inherit; color-scheme: dark;
+}
+
+/* ── Tuiles d'action chambre froide (accueil) ── */
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .action-grid { grid-template-columns: 1fr; } }
+.cf-add-tile.out { background: rgba(37,99,235,.12); border-color: rgba(59,130,246,.5); color: #93c5fd; }
+.cf-add-tile.out:active { background: rgba(37,99,235,.25); }
+
+/* ── Bandeau d'alerte DLC (accueil) ── */
+.dlc-banner { display: none; }
+.dlc-banner.visible {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: 14px; cursor: pointer; font-size: 15px;
+  background: rgba(245,158,11,.12); border: 2px solid rgba(245,158,11,.5); color: #fbbf24;
+}
+.dlc-banner.visible.hot { background: rgba(230,57,70,.14); border-color: rgba(230,57,70,.6); color: #ff8a8a; }
+.dlc-banner-go { font-weight: 700; white-space: nowrap; }
+
+/* Liste des lots : couleur selon la DLC */
+.cf-picker-item { padding-top: 12px !important; padding-bottom: 12px !important; }
+.cf-picker-item.lvl-expired, .cf-picker-item.lvl-urgent { border-left: 4px solid #e63946; }
+.cf-picker-item.lvl-soon { border-left: 4px solid #f59e0b; }
+.cf-picker-qty { color: #7dd3fc; font-family: monospace; font-size: 13px; }
+.cf-picker-item-meta.lvl-expired, .cf-picker-item-meta.lvl-urgent { color: #ff8a8a; }
+.cf-picker-item-meta.lvl-soon { color: #fbbf24; }
+
+/* Fiche d'un lot : actions */
+.lot-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lot-btn {
+  min-height: 64px; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit;
+  background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 2px solid var(--border, #2e2e4a);
+}
+.lot-btn.out { background: rgba(37,99,235,.25); border-color: #3b82f6; }
+.lot-btn.waste { background: rgba(230,57,70,.18); border-color: #e63946; }
+.lot-btn.freeze { background: rgba(125,211,252,.12); border-color: #7dd3fc; }
+.qty-stepper .qty-all { width: auto; padding: 0 14px; font-size: 14px; }
+
+/* Articles récents (Mettre en chambre froide) */
+.recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; padding: 0 16px 8px; }
+.recent-btn {
+  min-height: 56px; padding: 8px 10px; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+  font-family: inherit; background: rgba(45,198,83,.1); color: var(--text, #f0ece4); border: 1px solid rgba(45,198,83,.4);
+}
+
+/* Fiche de correction d'un lot (page Chambre froide) */
+.lot-edit-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 16px; }
+.lot-edit-row .dlc-ok { padding: 10px 16px; }
+
+/* ── Produit inconnu : articles existants proposés (nouveau code-barres) ── */
+.alias-box { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(37,99,235,.08); border: 1px solid var(--border, #2e2e4a); }
+.alias-title { font-size: 13px; color: var(--text-dim, #9090a8); margin-bottom: 8px; }
+.alias-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; max-height: 300px; overflow-y: auto; }
+.alias-btn {
+  min-height: 52px; padding: 8px 10px; border-radius: 10px; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+  font-family: inherit; background: var(--surface2, #22223b); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.alias-btn.in-cf { border-color: rgba(125,211,252,.5); }
+.alias-empty { font-size: 13px; color: var(--text-dim, #9090a8); }
+
+.alias-search {
+  width: 100%; margin-bottom: 10px; padding: 12px; border-radius: 10px; font-size: 16px; font-family: inherit;
+  background: var(--surface, #1a1a2e); color: var(--text, #f0ece4); border: 1px solid var(--border, #2e2e4a);
+}
+.alias-section { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim, #9090a8); margin: 10px 0 6px; }
+.alias-section:first-child { margin-top: 0; }
+#cf-link-area { max-height: 360px; overflow-y: auto; }
+#cf-link-area .alias-list { max-height: none; overflow: visible; }
+.alias-btn.no-code { border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.1); }
+
+/* ── Produits maison (fabrications) ── */
+.fab-tile { background: rgba(230,57,70,.08); border-color: rgba(230,57,70,.45); color: #ff8a8a; }
+.fab-tile:active { background: rgba(230,57,70,.18); }
+.fab-again-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.fab-again-grid .recent-btn small { display: block; font-size: 11px; font-weight: 500; color: var(--text-dim, #9090a8); margin-top: 2px; }
+.fab-card { border-left: 4px solid transparent; }
+.fab-card.lvl-expired, .fab-card.lvl-urgent { border-left-color: #e63946; }
+.fab-card.lvl-soon { border-left-color: #f59e0b; }
+.fab-qty { color: #7dd3fc; font-family: monospace; font-size: 14px; }
+.fab-lot { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--text-dim, #9090a8); }
+.fab-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-dim, #9090a8); margin-top: 6px; }
+.fab-card.lvl-expired .fab-dlc, .fab-card.lvl-urgent .fab-dlc { color: #ff8a8a; }
+.fab-card.lvl-soon .fab-dlc { color: #fbbf24; }
+.fab-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.fab-check input { width: 28px; height: 28px; accent-color: #2dc653; }

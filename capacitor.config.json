@@ -1,0 +1,8 @@
+{
+  "appId": "fr.boucherieamiot.scanner",
+  "appName": "Scanner Boucherie",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
