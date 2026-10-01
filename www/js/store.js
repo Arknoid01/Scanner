@@ -13,7 +13,7 @@
 // donc un seul import gère à la fois un ZIP téléchargé depuis Drive et une sauvegarde de l'app.
 
 const Store = (() => {
-  const NAMED_FILES = ['produits.json', 'chambre-froide.json', 'congelateur.json', 'cf-mapping.json'];
+  const NAMED_FILES = ['produits.json', 'chambre-froide.json', 'congelateur.json', 'cf-mapping.json', 'fabrications.json'];
   const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
   const ZIP_ROOT = 'Scanner Boucherie';
 

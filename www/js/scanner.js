@@ -158,6 +158,7 @@ function newCfId() { return 'cf_' + Date.now() + '_' + Math.random().toString(36
 function onBarcode(code) {
   const tab = document.querySelector('.tab.active')?.dataset.tab;
   if (cfAddOpen()) { cfAddScan(code); return; }
+  if (fabOpen()) { fabScan(code); return; }
   if (tab === 'freezer') { queueFreezerScan(code); return; }
   if (tab !== 'scan') switchTab('scan');
   queueScan(code);
@@ -1013,7 +1014,8 @@ function printBarcode() {
 }
 
 // Étiquettes d'un lot : nom, code-barres, DLC et date d'entrée — une par pièce
-function printLotLabels(code, nom, dlc, dateEntree, copies = 1) {
+// Produit maison : fab = date de fabrication (remplace la date d'entrée), lot = numéro de fabrication
+function printLotLabels(code, nom, dlc, dateEntree, copies = 1, { fab = null, lot = null } = {}) {
   const n = Math.max(1, Math.min(copies, 50));
   document.getElementById('print-area').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:16px;padding:20px;">${
     Array.from({ length: n }, (_, i) => `
@@ -1021,7 +1023,9 @@ function printLotLabels(code, nom, dlc, dateEntree, copies = 1) {
       <div style="font-size:16px;font-weight:700;margin-bottom:6px;">${esc(nom)}</div>
       <svg id="lot-svg-${i}"></svg>
       <div style="font-size:15px;font-weight:700;margin-top:4px;">DLC ${esc(formatDlcDisplay(dlc))}</div>
-      ${dateEntree ? `<div style="font-size:12px;color:#444;">Entré le ${esc(formatDlcDisplay(dateEntree))}</div>` : ''}
+      ${fab ? `<div style="font-size:12px;color:#444;">Fabriqué le ${esc(formatDlcDisplay(fab))}</div>`
+        : dateEntree ? `<div style="font-size:12px;color:#444;">Entré le ${esc(formatDlcDisplay(dateEntree))}</div>` : ''}
+      ${lot ? `<div style="font-size:12px;font-weight:700;color:#222;">Lot ${esc(lot)}</div>` : ''}
       <div style="font-family:monospace;font-size:10px;color:#666;margin-top:2px;">${esc(code)}</div>
     </div>`).join('')}</div>`;
   for (let i = 0; i < n; i++) {
@@ -1394,6 +1398,7 @@ function switchTab(tab) {
   if (tab === 'history') loadHistory();
   if (tab === 'labels') loadLabels();
   if (tab === 'freezer') loadFreezer();
+  if (tab === 'maison') renderMaison();
   if (tab === 'settings') loadSettings();
   if (tab === 'scan') renderRecent();
 }

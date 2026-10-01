@@ -805,3 +805,91 @@ test('mettre en chambre froide : code scanné inconnu + article existant choisi 
   assert.equal(read(win, 'produits.json')['123123'], 'Pâté maison');
   assert.ok(read(win, 'chambre-froide.json').some(s => s.nom === 'Pâté maison' && s.codePhysique === '123123'));
 });
+
+// ── Produits maison (fabrications) ──
+const fabItem = (doc, nom) => [...doc.querySelectorAll('#fab-choices .cf-add-item')].find(i => i.textContent.includes(nom));
+
+test('fabrication : nouveau produit → lot numéroté, rangé en chambre froide, étiquettes avec n° de lot', async () => {
+  const { win, doc, errors } = await openPage('index.html', await seededStorage());
+  win.switchTab('maison');
+  await sleep(30);
+  doc.querySelector('.fab-tile').click();
+  await sleep(30);
+  const input = doc.getElementById('fab-search-input');
+  input.value = 'Merguez';
+  input.dispatchEvent(new win.Event('input'));
+  input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await sleep(50);
+  [...doc.querySelectorAll('.dlc-picker .dlc-quick')].find(b => b.textContent.includes('J+3')).click();
+  await sleep(20);
+  doc.querySelectorAll('#fab-body .qty-stepper button')[1].click();
+  doc.querySelectorAll('#fab-body .qty-stepper button')[1].click();
+  doc.getElementById('fab-confirm').click();
+  await sleep(60);
+  const fabs = read(win, 'fabrications.json');
+  assert.equal(fabs.length, 1);
+  const f = fabs[0];
+  const lot = 'F' + today().slice(2).replace(/-/g, '') + '-1';
+  assert.equal(f.lot, lot);
+  assert.equal(f.qty, 3);
+  assert.equal(f.date, today());
+  assert.ok(f.code.startsWith('BA'));
+  assert.equal(read(win, 'produits.json')[f.code], 'Merguez');
+  const cf = read(win, 'chambre-froide.json').find(s => s.id === f.cfId);
+  assert.equal(cf.qty, 3);
+  assert.equal(cf.dlc, f.dlc);
+  assert.equal(cf.lotFab, lot);
+  const area = doc.getElementById('print-area');
+  assert.equal(area.querySelectorAll('svg').length, 3);
+  assert.match(area.textContent, new RegExp('Lot ' + lot));
+  assert.match(area.textContent, /Fabriqué le/);
+  assert.match(doc.getElementById('fab-list').textContent, /3 en chambre froide/);
+  assert.deepEqual(errors.filter(e => !/print\(\)/.test(e)), []); // jsdom n'a pas window.print
+});
+
+test('fabrication : « Refaire » reprend la même durée de DLC, n° de lot suivant ; sortie par scan', async () => {
+  const storage = await seededStorage();
+  storage['sbf:data/fabrications.json'] = JSON.stringify([
+    { id: 'fab_1', lot: 'F' + today().slice(2).replace(/-/g, '') + '-1', code: 'BA12AB', nom: 'Pâté maison',
+      date: '2026-09-01', dlc: '2026-09-08', qty: 2, cfId: null, createdAt: '2026-09-01T08:00:00Z' },
+  ]);
+  const { win, doc, errors } = await openPage('index.html', storage);
+  win.switchTab('maison');
+  await sleep(30);
+  [...doc.querySelectorAll('#fab-again .recent-btn')].find(b => b.textContent.includes('Pâté maison')).click();
+  await sleep(30);
+  assert.equal(doc.querySelector('.dlc-picker'), null); // pas de question : J+7 comme la dernière fois
+  doc.getElementById('fab-to-cf').checked = true;
+  doc.getElementById('fab-confirm-noprint').click();
+  await sleep(60);
+  const f = read(win, 'fabrications.json').find(x => x.id !== 'fab_1');
+  assert.equal(f.dlc, (() => { const d = new Date(); d.setDate(d.getDate() + 7); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })());
+  assert.match(f.lot, /-2$/);
+  assert.equal(doc.getElementById('print-area').innerHTML, '');
+  // L'étiquette imprimée (code de l'article) se sort de la chambre froide par le scan habituel
+  win.switchTab('scan');
+  await scan(win, 'BA12AB');
+  await sleep(50);
+  assert.equal(read(win, 'chambre-froide.json').find(s => s.id === f.cfId), undefined);
+  assert.deepEqual(errors, []);
+});
+
+test('fabrication : code scanné dans la fenêtre → produit choisi ; suppression retire le lot de la chambre froide', async () => {
+  const { win, doc } = await openPage('index.html', await seededStorage());
+  win.switchTab('maison');
+  await sleep(30);
+  doc.querySelector('.fab-tile').click();
+  await sleep(30);
+  await scan(win, 'BA12AB');
+  await sleep(30);
+  doc.querySelector('.dlc-picker .dlc-quick').click();
+  await sleep(20);
+  assert.match(doc.getElementById('fab-body').textContent, /Pâté maison/);
+  doc.getElementById('fab-confirm-noprint').click();
+  await sleep(60);
+  const f = read(win, 'fabrications.json')[0];
+  assert.ok(read(win, 'chambre-froide.json').some(s => s.id === f.cfId));
+  await win.deleteFab(f.id);
+  assert.deepEqual(read(win, 'fabrications.json'), []);
+  assert.ok(!read(win, 'chambre-froide.json').some(s => s.id === f.cfId));
+});

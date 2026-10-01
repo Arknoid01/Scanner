@@ -68,10 +68,12 @@ window.addEventListener('load', refreshScannerPill);
 // ── Sélecteur de DLC : boutons rapides + calendrier ──
 // Renvoie une promesse : 'AAAA-MM-JJ' ou null si annulé.
 // opts.allowPast : correction d'une DLC déjà saisie (dates passées permises) ; opts.value : date actuelle
+// opts.from : date de départ des boutons J+n (date de fabrication) ; opts.quick : délais proposés
 function pickDlc(title = 'Choisir la DLC', subtitle = '', opts = {}) {
   return new Promise((resolve) => {
-    const quick = [3, 5, 7, 10, 14, 21];
+    const quick = opts.quick || [3, 5, 7, 10, 14, 21];
     const today = new Date();
+    const base = opts.from ? new Date(opts.from + 'T00:00:00') : today;
     const fmt = d => d.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
     const overlay = document.createElement('div');
     overlay.className = 'dlc-picker-overlay';
@@ -81,7 +83,7 @@ function pickDlc(title = 'Choisir la DLC', subtitle = '', opts = {}) {
         ${subtitle ? `<div class="dlc-picker-sub">${subtitle}</div>` : ''}
         <div class="dlc-picker-grid">
           ${quick.map(n => {
-            const d = new Date(today); d.setDate(d.getDate() + n);
+            const d = new Date(base); d.setDate(d.getDate() + n);
             return `<button class="dlc-quick" data-date="${localDateStr(d)}"><strong>J+${n}</strong><span>${fmt(d)}</span></button>`;
           }).join('')}
         </div>

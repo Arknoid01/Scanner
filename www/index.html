@@ -742,6 +742,7 @@
   <div class="tab" data-tab="history" onclick="switchTab('history')">📅 Historique</div>
   <div class="tab" data-tab="labels" onclick="switchTab('labels')">🏷️ Étiquettes</div>
   <div class="tab" data-tab="freezer" onclick="switchTab('freezer')">❄️ Congélateur</div>
+  <div class="tab" data-tab="maison" onclick="switchTab('maison')">🍖 Maison</div>
   <div class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️</div>
 </div>
 
@@ -831,6 +832,31 @@
   <div id="freezer-content"></div>
 </div>
 
+<!-- ═══ PAGE PRODUITS MAISON (fabrications) ═══ -->
+<div class="page" id="page-maison">
+  <button class="cf-add-tile fab-tile" onclick="openFab()">
+    <span class="mode-icon">🍖</span>
+    <span><strong>Nouvelle fabrication</strong><span class="mode-sub">produit, date, DLC, quantité → étiquettes + chambre froide</span></span>
+  </button>
+  <div id="fab-again"></div>
+  <div class="search-bar">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="fab-search" placeholder="Chercher un produit ou un n° de lot…" oninput="renderFabList()" autocomplete="off">
+  </div>
+  <div id="fab-list"></div>
+</div>
+
+<!-- Nouvelle fabrication : choisir / créer le produit, puis date, DLC, quantité -->
+<div id="fab-modal" onclick="if(event.target===this) closeFab()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:flex-end;justify-content:center;padding:0;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:720px;max-height:85vh;display:flex;flex-direction:column;">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:16px;font-weight:700;">🍖 Nouvelle fabrication</div>
+      <button onclick="closeFab()" style="background:none;border:none;color:var(--text-dim);font-size:24px;cursor:pointer;padding:0 8px;">✕</button>
+    </div>
+    <div id="fab-body" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;"></div>
+  </div>
+</div>
+
 <!-- ═══ PAGE RÉGLAGES ═══ -->
 <div class="page" id="page-settings">
   <div id="settings-content"></div>
@@ -845,5 +871,6 @@
 <script src="js/store.js"></script>
 <script src="js/common.js"></script>
 <script src="js/scanner.js"></script>
+<script src="js/maison.js"></script>
 </body>
 </html>

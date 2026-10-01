@@ -258,3 +258,19 @@ button, .tab, .header-link { touch-action: manipulation; }
 #cf-link-area { max-height: 360px; overflow-y: auto; }
 #cf-link-area .alias-list { max-height: none; overflow: visible; }
 .alias-btn.no-code { border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.1); }
+
+/* ── Produits maison (fabrications) ── */
+.fab-tile { background: rgba(230,57,70,.08); border-color: rgba(230,57,70,.45); color: #ff8a8a; }
+.fab-tile:active { background: rgba(230,57,70,.18); }
+.fab-again-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.fab-again-grid .recent-btn small { display: block; font-size: 11px; font-weight: 500; color: var(--text-dim, #9090a8); margin-top: 2px; }
+.fab-card { border-left: 4px solid transparent; }
+.fab-card.lvl-expired, .fab-card.lvl-urgent { border-left-color: #e63946; }
+.fab-card.lvl-soon { border-left-color: #f59e0b; }
+.fab-qty { color: #7dd3fc; font-family: monospace; font-size: 14px; }
+.fab-lot { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--text-dim, #9090a8); }
+.fab-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-dim, #9090a8); margin-top: 6px; }
+.fab-card.lvl-expired .fab-dlc, .fab-card.lvl-urgent .fab-dlc { color: #ff8a8a; }
+.fab-card.lvl-soon .fab-dlc { color: #fbbf24; }
+.fab-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.fab-check input { width: 28px; height: 28px; accent-color: #2dc653; }
